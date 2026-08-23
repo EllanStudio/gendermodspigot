@@ -1,5 +1,7 @@
 name: Female-Gender-Mod-Plugin
-version: '${project.version}'
+version: '1.6.0'
 main: dbrighthd.wildfiregendermodplugin.GenderModPlugin
 api-version: '1.21'
-authors: [ 'dbrighthd', 'Stigstille', 'winnpixie' ]
+description: Plugin companion for Wildfire's Female Gender Mod — MC 26.2 / sync protocol v2
+authors: [dbrighthd]
+softdepend: [Plan, Vault]

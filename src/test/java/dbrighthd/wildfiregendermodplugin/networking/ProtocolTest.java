@@ -1,127 +1,157 @@
 package dbrighthd.wildfiregendermodplugin.networking;
 
 import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftInputStream;
-import dbrighthd.wildfiregendermodplugin.networking.wildfire.ModSyncPacketV5;
+import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftOutputStream;
+import dbrighthd.wildfiregendermodplugin.networking.wildfire.ModSyncPacketV6;
 import dbrighthd.wildfiregendermodplugin.wildfire.ModUser;
-import dbrighthd.wildfiregendermodplugin.wildfire.setup.GenderIdentities;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.*;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.util.UUID;
+import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class ProtocolTest {
-        @Test
-        public void testV5Parsing() throws IOException {
-                // Sample V5 packet captured from research:
-                // UUID: 00000000-0000-0000-0000-000000000000
-                // Gender: FEMALE
-                // Bust: 0.5f
-                // HurtSounds: true
-                // VoicePitch: 1.0f
-                // Physics: (true, true, 1.0f, 1.0f)
-                // Breasts: (0.0f, 0.0f, 0.0f, false, 0.0f)
-                // UV Layouts: Empty layers (0 items in map)
+/**
+ * V6 protocol tests — mod sync protocol v2 (MC 26.2).
+ */
+class ProtocolTest {
 
-                byte[] data = new byte[] {
-                                // UUID (2 longs = 16 bytes)
-                                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                // Gender (FEMALE = index 0)
-                                0x00,
-                                // BustSize (0.5f)
-                                0x3F, 0x00, 0x00, 0x00,
-                                // HurtSounds (true)
-                                0x01,
-                                // VoicePitch (1.0f)
-                                0x3F, (byte) 0x80, 0x00, 0x00,
-                                // Physics (true, true, 1.0f, 1.0f)
-                                0x01, 0x01,
-                                0x3F, (byte) 0x80, 0x00, 0x00,
-                                0x3F, (byte) 0x80, 0x00, 0x00,
-                                // Breasts (0.0f, 0.0f, 0.0f, false, 0.0f)
-                                0x00, 0x00, 0x00, 0x00,
-                                0x00, 0x00, 0x00, 0x00,
-                                0x00, 0x00, 0x00, 0x00,
-                                0x00,
-                                0x00, 0x00, 0x00, 0x00,
-                                // UV Layouts (Skin: Left count=0, Right count=0; Overlay: Left count=0, Right
-                                // count=0)
-                                0x00, 0x00, 0x00, 0x00
-                };
+    @Test
+    void testDefaultUser() {
+        UUID uid = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        ModUser user = new ModSyncPacketV6().createDefaultUser(uid);
 
-                ModSyncPacketV5 packet = new ModSyncPacketV5();
-                try (CraftInputStream input = CraftInputStream.ofBytes(data)) {
-                        ModUser user = packet.read(input);
-                        assertNotNull(user);
-                        assertEquals(new UUID(0, 0), user.userId());
-                        assertEquals(GenderIdentities.FEMALE, user.configuration().generalOptions().genderIdentity());
-                        assertEquals(0.5f, user.configuration().breastOptions().bustSize());
-                        assertTrue(user.configuration().generalOptions().hurtSounds());
-                        assertEquals(1.0f, user.configuration().generalOptions().voicePitch());
-                        assertTrue(user.configuration().physicsOptions().breastPhysics());
-                        assertTrue(user.configuration().generalOptions().showInArmor());
-                        assertEquals(1.0f, user.configuration().physicsOptions().buoyancy());
-                        assertEquals(1.0f, user.configuration().physicsOptions().floppiness());
-                        assertNotNull(user.configuration().uvLayouts());
-                }
+        assertEquals(uid, user.userId());
+        assertEquals(GenderIdentities.MALE, user.configuration().generalOptions().genderIdentity());
+        assertTrue(user.configuration().generalOptions().showInArmor());
+        assertTrue(user.configuration().generalOptions().holidayThemes());
+        assertFalse(user.configuration().physicsOptions().breastPhysics());
+        assertEquals(0.6f, user.configuration().breastOptions().bustSize());
+    }
+
+    @Test
+    void testReadCompactMale() throws IOException {
+        UUID uid = UUID.randomUUID();
+        byte[] data = new byte[]{0}; // false = compact MALE → default user
+
+        ModUser user = new ModSyncPacketV6().read(CraftInputStream.ofBytes(data), uid);
+
+        assertNotNull(user);
+        assertEquals(uid, user.userId());
+        assertEquals(GenderIdentities.MALE, user.configuration().generalOptions().genderIdentity());
+    }
+
+    @Test
+    void testRoundTripFemale() throws IOException {
+        UUID uid = UUID.randomUUID();
+        GeneralOptions general = new GeneralOptions(
+                GenderIdentities.FEMALE, true, 1.2f, true, false);
+        PhysicsOptions physics = new PhysicsOptions(true, true, 0.8f, 0.9f);
+        BreastOptions breast = new BreastOptions(0.7f, 0.1f, 0.2f, 0.3f, true, 0.4f);
+
+        Map<UVDirection, UVQuad> quads = new EnumMap<>(UVDirection.class);
+        quads.put(UVDirection.NORTH, new UVQuad(1, 2, 3, 4));
+        UVLayout layout = new UVLayout(quads);
+        UVLayouts.Layer layer = new UVLayouts.Layer(layout, layout);
+        UVLayouts uvLayouts = new UVLayouts(layer, layer);
+
+        ModUser original = new ModUser(uid, new ModConfiguration(general, physics, breast, uvLayouts));
+        ModSyncPacketV6 codec = new ModSyncPacketV6();
+
+        // Serialize (clientbound format)
+        byte[] bytes;
+        try (var baos = new java.io.ByteArrayOutputStream();
+             var out = new CraftOutputStream(baos)) {
+            codec.write(original, out);
+            bytes = baos.toByteArray();
         }
 
-        @Test
-        public void testV5RoundTrip() throws IOException {
-                java.util.Map<dbrighthd.wildfiregendermodplugin.wildfire.setup.UVDirection, dbrighthd.wildfiregendermodplugin.wildfire.setup.UVQuad> quads = new java.util.EnumMap<>(
-                                dbrighthd.wildfiregendermodplugin.wildfire.setup.UVDirection.class);
-                quads.put(dbrighthd.wildfiregendermodplugin.wildfire.setup.UVDirection.NORTH,
-                                new dbrighthd.wildfiregendermodplugin.wildfire.setup.UVQuad(1, 2, 3, 4));
+        // Deserialize via clientbound path
+        ModUser decoded = codec.readClientbound(bytes);
 
-                dbrighthd.wildfiregendermodplugin.wildfire.setup.UVLayout layout = new dbrighthd.wildfiregendermodplugin.wildfire.setup.UVLayout(
-                                quads);
-                dbrighthd.wildfiregendermodplugin.wildfire.setup.UVLayouts.Layer layer = new dbrighthd.wildfiregendermodplugin.wildfire.setup.UVLayouts.Layer(
-                                layout, layout);
-                dbrighthd.wildfiregendermodplugin.wildfire.setup.UVLayouts uvLayouts = new dbrighthd.wildfiregendermodplugin.wildfire.setup.UVLayouts(
-                                layer, layer);
+        assertEquals(uid, decoded.userId());
+        assertEquals(GenderIdentities.FEMALE, decoded.configuration().generalOptions().genderIdentity());
+        assertEquals(0.7f, decoded.configuration().breastOptions().bustSize());
+        assertEquals(0.8f, decoded.configuration().physicsOptions().buoyancy());
+        assertFalse(decoded.configuration().generalOptions().holidayThemes());
 
-                dbrighthd.wildfiregendermodplugin.wildfire.setup.ModConfiguration config = new dbrighthd.wildfiregendermodplugin.wildfire.setup.ModConfiguration(
-                                new dbrighthd.wildfiregendermodplugin.wildfire.setup.GeneralOptions(
-                                                GenderIdentities.MALE, true, 1.2f,
-                                                true),
-                                new dbrighthd.wildfiregendermodplugin.wildfire.setup.PhysicsOptions(true, true, 0.8f,
-                                                0.9f),
-                                new dbrighthd.wildfiregendermodplugin.wildfire.setup.BreastOptions(0.7f, 0.1f, 0.2f,
-                                                0.3f, true, 0.4f),
-                                uvLayouts);
+        UVQuad quad = decoded.configuration().uvLayouts().skin().left()
+                .getQuads().get(UVDirection.NORTH);
+        assertNotNull(quad);
+        assertEquals(1, quad.x1());
+        assertEquals(4, quad.y2());
+    }
 
-                UUID userId = UUID.randomUUID();
-                ModUser user = new ModUser(userId, config);
-                ModSyncPacketV5 packet = new ModSyncPacketV5();
+    @Test
+    void testBatchRoundTrip() throws IOException {
+        UUID uid1 = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID uid2 = UUID.fromString("00000000-0000-0000-0000-000000000002");
 
-                byte[] serialized;
-                try (java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-                                dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftOutputStream out = new dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftOutputStream(
-                                                bytes)) {
-                        packet.write(user, out);
-                        serialized = bytes.toByteArray();
-                }
+        // Create two users
+        ModUser user1 = new ModUser(uid1, new ModConfiguration(
+                new GeneralOptions(GenderIdentities.FEMALE, true, 1.0f, true, true),
+                new PhysicsOptions(true, true, 0.5f, 0.6f),
+                new BreastOptions(0.5f, 0f, 0f, 0f, false, 0f),
+                new UVLayouts(
+                        new UVLayouts.Layer(new UVLayout(), new UVLayout()),
+                        new UVLayouts.Layer(new UVLayout(), new UVLayout()))));
 
-                ModUser deserialized;
-                try (CraftInputStream in = CraftInputStream.ofBytes(serialized)) {
-                        deserialized = packet.read(in);
-                }
+        ModUser user2 = new ModUser(uid2, new ModConfiguration(
+                new GeneralOptions(GenderIdentities.MALE, true, 1.0f, true, true),
+                new PhysicsOptions(false, false, 0.333f, 0.75f),
+                new BreastOptions(0.6f, 0f, 0f, 0f, true, 0f),
+                new UVLayouts(
+                        new UVLayouts.Layer(new UVLayout(), new UVLayout()),
+                        new UVLayouts.Layer(new UVLayout(), new UVLayout()))));
 
-                assertEquals(userId, deserialized.userId());
-                assertEquals(GenderIdentities.MALE, deserialized.configuration().generalOptions().genderIdentity());
-                assertEquals(0.7f, deserialized.configuration().breastOptions().bustSize());
-                assertEquals(0.8f, deserialized.configuration().physicsOptions().buoyancy());
+        ModSyncPacketV6 codec = new ModSyncPacketV6();
 
-                assertNotNull(deserialized.configuration().uvLayouts());
-                dbrighthd.wildfiregendermodplugin.wildfire.setup.UVQuad quad = deserialized.configuration().uvLayouts()
-                                .skin()
-                                .left().getQuads()
-                                .get(dbrighthd.wildfiregendermodplugin.wildfire.setup.UVDirection.NORTH);
-                assertNotNull(quad);
-                assertEquals(1, quad.x1());
-                assertEquals(2, quad.y1());
-                assertEquals(3, quad.x2());
-                assertEquals(4, quad.y2());
-        }
+        // Write batch
+        byte[] batch = codec.writeBatch(List.of(user1, user2));
+
+        // Read batch
+        Map<UUID, ModUser> result = codec.readBatch(batch);
+
+        assertEquals(2, result.size());
+        assertTrue(result.containsKey(uid1));
+        assertTrue(result.containsKey(uid2));
+
+        // User 1 (FEMALE) should have full data
+        ModUser d1 = result.get(uid1);
+        assertEquals(uid1, d1.userId());
+        assertEquals(GenderIdentities.FEMALE, d1.configuration().generalOptions().genderIdentity());
+
+        // User 2 (MALE) should be compact
+        ModUser d2 = result.get(uid2);
+        assertEquals(uid2, d2.userId());
+        assertEquals(GenderIdentities.MALE, d2.configuration().generalOptions().genderIdentity());
+    }
+
+    @Test
+    void testBatchEmpty() throws IOException {
+        ModSyncPacketV6 codec = new ModSyncPacketV6();
+        byte[] batch = codec.writeBatch(List.of());
+        Map<UUID, ModUser> result = codec.readBatch(batch);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testClientboundSingle() throws IOException {
+        UUID uid = UUID.randomUUID();
+        ModUser user = new ModUser(uid, new ModConfiguration(
+                new GeneralOptions(GenderIdentities.FEMALE, true, 0.8f, true, true),
+                new PhysicsOptions(true, true, 0.5f, 0.6f),
+                new BreastOptions(0.5f, 0f, 0f, 0f, false, 0f),
+                new UVLayouts(
+                        new UVLayouts.Layer(new UVLayout(), new UVLayout()),
+                        new UVLayouts.Layer(new UVLayout(), new UVLayout()))));
+
+        ModSyncPacketV6 codec = new ModSyncPacketV6();
+        byte[] encoded = codec.writeClientbound(user);
+        ModUser decoded = codec.readClientbound(encoded);
+
+        assertEquals(uid, decoded.userId());
+        assertEquals(GenderIdentities.FEMALE, decoded.configuration().generalOptions().genderIdentity());
+    }
 }

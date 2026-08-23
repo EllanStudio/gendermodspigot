@@ -1,17 +1,13 @@
-# Configuration version -- DO NOT CHANGE!
-config-version: 0.2
+# Female-Gender-Mod-Plugin Configuration
+# MC 26.2 only — mod sync protocol v2
 
-# Configuration relating to Wildfire's Female Gender Mod
-mod:
-  # The packet format used for mod data reads/writes
-  # For a list of protocols and their supported mod versions, refer to https://modrinth.com/plugin/female-gender-spigot
-  # -1 will use the newest known protocol, so that you won't need to change this every mod and plugin update.
-  # Undocumented protocols will cause this plugin to disable itself on launch.
-  protocol: -1
-
-# Logging of events and debug messages
-logging:
-  # Whether logging should be printed out to the server console.
+# Cross-server sync via Velocity/BungeeCord
+# When true, player data is forwarded across servers
+crossServer:
   enabled: true
-  # Toggle the inclusion of "debug" messages with logging.
-  debug: false
+  # How often (in seconds) to broadcast full state to proxy
+  broadcastInterval: 60
+
+# Debug logging
+debug:
+  logSyncPackets: false

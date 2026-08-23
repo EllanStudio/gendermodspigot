@@ -1,39 +1,65 @@
-# Plugin for Wildfire's Female Gender Mod
+# Female-Gender-Mod-Plugin
 
-This is a Spigot plugin that allows clients using [Wildfire's Female Gender Mod](https://modrinth.com/mod/female-gender)
-to have synced configs when playing on a Spigot server. This plugin was made by me as a member of the community and is
-not affiliated with the Wildfire's Female Gender Mod.
+A Paper / Spigot plugin that syncs player gender data between clients using Wildfire's Female Gender Mod and the server.
 
-Wildfire's Female Gender Mod is still required on the client to use the features, all this plugin does is sync the
-player-specific settings as it would on a Fabric server with the mod installed.
+Supports MC 26.2+ with mod sync protocol v2 (mod 5.0.0-Beta.4+).
 
-Currently, this plugin only works in syncing the Fabric version of the mod, but I will be trying to fix it in the future
-for Forge (if possible). This is the first plugin I have ever made so it is not particularly clean, but it works!
+Replaces the old Fabric-only sync on Spigot/Paper servers, with full cross-server support via Velocity or BungeeCord proxies.
 
-Thank you to Flamgop for the help with learning how to make a plugin, and Stigstille + winnpixie for porting it to the
-latest Spigot version!
+## Installation
 
-Download from Modrinth: https://modrinth.com/plugin/female-gender-spigot
+### Prerequisites
+
+| Requirement | Version |
+|-------------|---------|
+| Minecraft Server | Paper 26.2+ (or Spigot 1.21.1+) |
+| Java | 25+ |
+| Female Gender Mod (client) | 5.0.0-Beta.4+ |
+
+### Single Server Setup
+
+1. Download the latest JAR from the Releases page
+2. Place `Female-Gender-Mod-Plugin-1.6.0.jar` into your server's `plugins/` directory
+3. Restart the server
+4. Done! Players with the mod installed will now have their data synced automatically
+
+### Cross-Server Setup (Velocity / BungeeCord)
+
+#### Step 1: Install on each Paper/Spigot backend
+
+Install `Female-Gender-Mod-Plugin-1.6.0.jar` on every backend server.
+
+#### Step 2: Install on the Proxy
+
+**For Velocity:**
+
+1. Download the JAR (same file) to your Velocity plugins directory
+2. The plugin registers itself as a Velocity plugin via `@Plugin` annotation
+3. Start Velocity - the plugin will automatically handle cross-server forwarding
+
+**For BungeeCord:**
+
+The Paper plugin uses the standard `BungeeCord` plugin messaging channel, which BungeeCord natively supports. No additional plugin needed on BungeeCord.
+
+#### Step 3: Configure Cross-Server
+
+Each backend server needs to be registered in the proxy config as a distinct server. The plugin uses `RegisteredServer.getServerInfo().getName()` to identify which server a message came from and where to forward it.
+
+### Client-Side
+
+Players must have Wildfire's Female Gender Mod 5.0.0-Beta.4+ installed on their client.
 
 ## Build Instructions
 
-1. (Optional) Open the project in your IDE of choice (i.e. Eclipse, IntelliJ IDEA, NetBeans, etc.)
-2. Compile using Maven's `Package` task (or run the command `mvn package` in your terminal).
-3. Copy the JAR file from the `target` folder to your server's `plugins` directory.
-4. Enjoy synced gender settings!
+```bash
+git clone https://github.com/dbrighthd/gendermodspigot.git
+cd gendermodspigot
+gradlew.bat build
+```
 
-## Configuration Help
+The built JAR will be at `build/libs/Female-Gender-Mod-Plugin-1.6.0.jar`.
 
-### Mod
+## License
 
-`protocol` (Which packet format to use)
-
-| Protocol |      Mod      |
-|:--------:|:-------------:|
-|    2     | 2.8.1 - 3.0.1 |
-|    3     | 3.1.0 - 4.0.0 |
-|    4     | 4.0.0 - 4.3.4 |
-|    5     | 5.0.0 - ?.?.? |
-
-Setting this value to -1 will try using the newest known protocol, useful so you don't need to change this manually
-every time you update the mod and plugin.
+This project is a community plugin and is not affiliated with Wildfire's Female Gender Mod.
+The mod is required on the client side for this plugin to function.
