@@ -1,16 +1,14 @@
 package dbrighthd.wildfiregendermodplugin.wildfire.setup;
 
-/**
- * @author winnpixie
- */
+/** BreastPhysics fields present in the Beta.4 sync packet. */
 public record PhysicsOptions(boolean breastPhysics,
-                             boolean armorPhysics,
-                             float buoyancy,
+                             boolean showInArmor,
+                             float bounceMultiplier,
                              float floppiness) {
     public static class Builder {
         private boolean breastPhysics;
-        private boolean armorPhysics;
-        private float buoyancy;
+        private boolean showInArmor;
+        private float bounceMultiplier;
         private float floppiness;
 
         public Builder setBreastPhysics(boolean breastPhysics) {
@@ -18,13 +16,13 @@ public record PhysicsOptions(boolean breastPhysics,
             return this;
         }
 
-        public Builder setArmorPhysics(boolean armorPhysics) {
-            this.armorPhysics = armorPhysics;
+        public Builder setShowInArmor(boolean showInArmor) {
+            this.showInArmor = showInArmor;
             return this;
         }
 
-        public Builder setBuoyancy(float buoyancy) {
-            this.buoyancy = buoyancy;
+        public Builder setBounceMultiplier(float bounceMultiplier) {
+            this.bounceMultiplier = bounceMultiplier;
             return this;
         }
 
@@ -34,7 +32,7 @@ public record PhysicsOptions(boolean breastPhysics,
         }
 
         public PhysicsOptions create() {
-            return new PhysicsOptions(breastPhysics, armorPhysics, buoyancy, floppiness);
+            return new PhysicsOptions(breastPhysics, showInArmor, bounceMultiplier, floppiness);
         }
     }
 }

@@ -1,19 +1,17 @@
 package dbrighthd.wildfiregendermodplugin.wildfire;
 
-/**
- * V6 protocol constants for the Paper backend plugin.
- *
- * The proxy channel is private to the companion Velocity bridge; it is not a
- * BungeeCord compatibility channel and must never be exposed to clients.
- */
+/** Exact protocol constants for Female Gender Mod 5.0.0-Beta.4 on MC 26.2. */
 public final class ModConstants {
     public static final String MOD_ID = "wildfire_gender";
 
+    /** Informational play-phase hello introduced by Beta.2. */
     public static final String SERVERBOUND_HELLO = MOD_ID + ":serverbound/hello";
     public static final String CLIENTBOUND_HELLO = MOD_ID + ":clientbound/hello";
-    public static final String SERVERBOUND_SYNC = MOD_ID + ":serverbound/sync";
-    public static final String CLIENTBOUND_SYNC = MOD_ID + ":clientbound/sync";
-    public static final int SYNC_PROTOCOL_VERSION = 2;
+
+    /** Beta.4 play-phase profile channels. */
+    public static final String SERVERBOUND_SYNC = MOD_ID + ":send_gender_info";
+    public static final String CLIENTBOUND_SYNC = MOD_ID + ":sync";
+    public static final int SYNC_PROTOCOL_VERSION = 1;
 
     /** Custom backend <-> Velocity bridge channel. */
     public static final String PROXY_CHANNEL = MOD_ID + ":proxy";

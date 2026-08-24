@@ -15,7 +15,7 @@ public final class GenderModPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        logger.info("Female-Gender-Mod-Paper v{}", getPluginMeta().getVersion());
+        logger.info("Female-Gender-Mod-Paper v%s", getPluginMeta().getVersion());
         saveDefaultConfig();
         networkManager.enable();
 

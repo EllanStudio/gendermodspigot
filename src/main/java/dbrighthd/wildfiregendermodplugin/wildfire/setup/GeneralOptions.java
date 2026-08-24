@@ -1,19 +1,13 @@
 package dbrighthd.wildfiregendermodplugin.wildfire.setup;
 
-/**
- * @author winnpixie
- */
+/** General fields present in the Beta.4 sync packet. */
 public record GeneralOptions(GenderIdentities genderIdentity,
-                            boolean hurtSounds,
-                            float voicePitch,
-                            boolean showInArmor,
-                            boolean holidayThemes) {
+                             boolean hurtSounds,
+                             float voicePitch) {
     public static class Builder {
         private GenderIdentities genderIdentity;
         private boolean hurtSounds;
         private float voicePitch;
-        private boolean showInArmor;
-        private boolean holidayThemes = true;
 
         public Builder setGenderIdentity(GenderIdentities genderIdentity) {
             this.genderIdentity = genderIdentity;
@@ -30,18 +24,8 @@ public record GeneralOptions(GenderIdentities genderIdentity,
             return this;
         }
 
-        public Builder setShowInArmor(boolean showInArmor) {
-            this.showInArmor = showInArmor;
-            return this;
-        }
-
-        public Builder setHolidayThemes(boolean holidayThemes) {
-            this.holidayThemes = holidayThemes;
-            return this;
-        }
-
         public GeneralOptions create() {
-            return new GeneralOptions(genderIdentity, hurtSounds, voicePitch, showInArmor, holidayThemes);
+            return new GeneralOptions(genderIdentity, hurtSounds, voicePitch);
         }
     }
 }

@@ -1,7 +1,8 @@
 package dbrighthd.wildfiregendermodplugin.networking;
 
 import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftInputStream;
-import dbrighthd.wildfiregendermodplugin.networking.wildfire.ModSyncPacketV6;
+import dbrighthd.wildfiregendermodplugin.networking.wildfire.Beta4SyncPacketCodec;
+import dbrighthd.wildfiregendermodplugin.wildfire.ModConstants;
 import dbrighthd.wildfiregendermodplugin.wildfire.ModUser;
 import dbrighthd.wildfiregendermodplugin.wildfire.setup.BreastOptions;
 import dbrighthd.wildfiregendermodplugin.wildfire.setup.GeneralOptions;
@@ -25,41 +26,55 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Tests the official, single-profile V6 wire format only. */
+/** Regression tests copied from the 5.0.0-Beta.4 AbstractSyncPacket field order. */
 class ProtocolTest {
-    private final ModSyncPacketV6 codec = new ModSyncPacketV6();
+    private final Beta4SyncPacketCodec codec = new Beta4SyncPacketCodec();
 
     @Test
-    void compactMaleUsesOnlyUuidAndFalsePresentFlag() throws IOException {
-        UUID uid = UUID.fromString("00000000-0000-0000-0000-000000000001");
-        byte[] bytes = codec.writeClientbound(ModSyncPacketV6.createDefaultUser(uid));
-
-        // Clientbound sync is UUID (16 bytes) + PlayerConfig.COMPACT_STREAM_CODEC.
-        assertEquals(17, bytes.length);
-        assertEquals(0, bytes[16]);
-
-        ModUser decoded = codec.readClientbound(bytes);
-        assertEquals(uid, decoded.userId());
-        assertEquals(GenderIdentities.MALE, decoded.configuration().generalOptions().genderIdentity());
-        assertTrue(decoded.configuration().physicsOptions().breastPhysics());
+    void usesExactBeta4ChannelsAndHelloVersion() {
+        assertEquals("wildfire_gender:serverbound/hello", ModConstants.SERVERBOUND_HELLO);
+        assertEquals("wildfire_gender:clientbound/hello", ModConstants.CLIENTBOUND_HELLO);
+        assertEquals("wildfire_gender:send_gender_info", ModConstants.SERVERBOUND_SYNC);
+        assertEquals("wildfire_gender:sync", ModConstants.CLIENTBOUND_SYNC);
+        assertEquals(1, ModConstants.SYNC_PROTOCOL_VERSION);
     }
 
     @Test
-    void serverboundCompactMaleUsesSenderUuid() throws IOException {
-        UUID sender = UUID.randomUUID();
-        ModUser user = codec.read(CraftInputStream.ofBytes(new byte[]{0}), sender);
+    void defaultPacketMatchesOfficialFixedFieldOrder() throws IOException {
+        UUID uid = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff");
+        byte[] bytes = codec.writeClientbound(Beta4SyncPacketCodec.createDefaultUser(uid));
 
-        assertEquals(sender, user.userId());
-        assertEquals(GenderIdentities.MALE, user.configuration().generalOptions().genderIdentity());
-        assertEquals(0.6F, user.configuration().breastOptions().bustSize());
+        // 53 fixed bytes plus four empty UV-map VarInts. Beta.4 has no compact flag.
+        assertEquals(57, bytes.length);
+        try (CraftInputStream input = CraftInputStream.ofBytes(bytes)) {
+            assertEquals(uid, input.readUUID());
+            assertEquals(GenderIdentities.MALE.ordinal(), input.readVarInt());
+            assertEquals(0.6F, input.readFloat());
+            assertTrue(input.readBoolean());
+            assertEquals(1.0F, input.readFloat());
+            assertTrue(input.readBoolean());
+            assertTrue(input.readBoolean());
+            assertEquals(0.333F, input.readFloat());
+            assertEquals(0.75F, input.readFloat());
+            assertEquals(0.0F, input.readFloat());
+            assertEquals(0.0F, input.readFloat());
+            assertEquals(0.0F, input.readFloat());
+            assertTrue(input.readBoolean());
+            assertEquals(0.0F, input.readFloat());
+            assertEquals(0, input.readVarInt());
+            assertEquals(0, input.readVarInt());
+            assertEquals(0, input.readVarInt());
+            assertEquals(0, input.readVarInt());
+            assertEquals(0, input.available());
+        }
     }
 
     @Test
-    void roundTripFemaleUsesStandardClientboundFormat() throws IOException {
+    void roundTripFemaleProfileIncludingUvLayouts() throws IOException {
         UUID uid = UUID.randomUUID();
-        GeneralOptions general = new GeneralOptions(GenderIdentities.FEMALE, true, 1.2F, true, false);
-        PhysicsOptions physics = new PhysicsOptions(true, true, 0.8F, 0.9F);
-        BreastOptions breasts = new BreastOptions(0.7F, 0.1F, 0.2F, 0.3F, true, 0.04F);
+        GeneralOptions general = new GeneralOptions(GenderIdentities.FEMALE, true, 1.2F);
+        PhysicsOptions physics = new PhysicsOptions(true, true, 0.4F, 0.9F);
+        BreastOptions breasts = new BreastOptions(0.7F, 0.1F, 0.2F, -0.3F, true, 0.04F);
 
         Map<UVDirection, UVQuad> quads = new EnumMap<>(UVDirection.class);
         quads.put(UVDirection.NORTH, new UVQuad(1, 2, 3, 4));
@@ -73,8 +88,11 @@ class ProtocolTest {
         assertEquals(uid, decoded.userId());
         assertEquals(GenderIdentities.FEMALE, decoded.configuration().generalOptions().genderIdentity());
         assertEquals(0.7F, decoded.configuration().breastOptions().bustSize());
-        assertEquals(0.8F, decoded.configuration().physicsOptions().buoyancy());
-        assertFalse(decoded.configuration().generalOptions().holidayThemes());
+        assertEquals(-0.3F, decoded.configuration().breastOptions().zOffset());
+        assertEquals(0.4F, decoded.configuration().physicsOptions().bounceMultiplier());
+        assertEquals(0.9F, decoded.configuration().physicsOptions().floppiness());
+        assertTrue(decoded.configuration().physicsOptions().showInArmor());
+
 
         UVQuad quad = decoded.configuration().uvLayouts().skin().left().getQuads().get(UVDirection.NORTH);
         assertNotNull(quad);
@@ -83,28 +101,50 @@ class ProtocolTest {
     }
 
     @Test
-    void disabledPhysicsDoesNotReadPhysicsFields() throws IOException {
+    void physicsFieldsAreAlwaysPresentEvenWhenDisabled() throws IOException {
         UUID uid = UUID.randomUUID();
         ModUser original = new ModUser(uid, new ModConfiguration(
-                new GeneralOptions(GenderIdentities.OTHER, false, 0.9F, false, true),
-                new PhysicsOptions(false, false, 9.9F, 8.8F),
-                new BreastOptions(0.5F, 0F, 0F, 0F, false, 0F),
-                new UVLayouts(
-                        new UVLayouts.Layer(new UVLayout(), new UVLayout()),
-                        new UVLayouts.Layer(new UVLayout(), new UVLayout()))));
+                new GeneralOptions(GenderIdentities.OTHER, false, 0.9F),
+                new PhysicsOptions(false, false, 0.2F, 0.5F),
+                new BreastOptions(0.5F, 0F, 0F, -0.2F, false, 0F),
+                emptyLayouts()));
 
-        ModUser decoded = codec.readClientbound(codec.writeClientbound(original));
+        byte[] bytes = codec.writeClientbound(original);
+        assertEquals(57, bytes.length);
+        ModUser decoded = codec.readClientbound(bytes);
         assertFalse(decoded.configuration().physicsOptions().breastPhysics());
-        assertEquals(0.333F, decoded.configuration().physicsOptions().buoyancy());
-        assertEquals(0.75F, decoded.configuration().physicsOptions().floppiness());
+        assertFalse(decoded.configuration().physicsOptions().showInArmor());
+        assertEquals(0.2F, decoded.configuration().physicsOptions().bounceMultiplier());
+        assertEquals(0.5F, decoded.configuration().physicsOptions().floppiness());
     }
 
     @Test
-    void rejectsMoreUvEntriesThanOfficialCodecAllows() {
-        // present, gender, five breast floats, physics disabled, then first UV map count = 6
-        byte[] malformed = new byte[]{1, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 6};
-        assertThrows(IOException.class, () -> codec.read(CraftInputStream.ofBytes(malformed), UUID.randomUUID()));
+    void serverboundPacketContainsAndMustMatchSenderUuid() throws IOException {
+        UUID sender = UUID.randomUUID();
+        byte[] bytes = codec.writeClientbound(Beta4SyncPacketCodec.createDefaultUser(sender));
+
+        ModUser decoded = codec.read(CraftInputStream.ofBytes(bytes), sender);
+        assertEquals(sender, decoded.userId());
+        assertThrows(IOException.class,
+                () -> codec.read(CraftInputStream.ofBytes(bytes), UUID.randomUUID()));
+    }
+
+    @Test
+    void rejectsProtocol2CompactPayload() {
+        assertThrows(IOException.class,
+                () -> codec.read(CraftInputStream.ofBytes(new byte[]{0}), UUID.randomUUID()));
+    }
+
+    @Test
+    void rejectsMoreUvEntriesThanOfficialCodecAllows() throws IOException {
+        byte[] malformed = codec.writeClientbound(Beta4SyncPacketCodec.createDefaultUser(UUID.randomUUID()));
+        malformed[53] = 6; // First UV map count; UVDirection has exactly five values.
+        assertThrows(IOException.class, () -> codec.readClientbound(malformed));
+    }
+
+    private static UVLayouts emptyLayouts() {
+        return new UVLayouts(
+                new UVLayouts.Layer(new UVLayout(), new UVLayout()),
+                new UVLayouts.Layer(new UVLayout(), new UVLayout()));
     }
 }

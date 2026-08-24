@@ -3,7 +3,8 @@ plugins {
 }
 
 group = 'dbrighthd'
-version = '1.6.1'
+version = '1.6.2'
+def pluginVersion = version.toString()
 
 java {
     toolchain {
@@ -50,6 +51,37 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs.add('-Xlint:deprecation')
 }
 
+// Velocity's Guice/ASM cannot inspect Java 25 (major 69) plugin annotations yet.
+// Compile only the bridge to Java 17 bytecode; Paper remains Java 25 / major 69.
+// Resolve the API with the Java 25 build JVM, while javac emits Java 17 plugin classes.
+configurations.named('velocityCompileClasspath') {
+    attributes {
+        attribute(org.gradle.api.attributes.java.TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 25)
+    }
+}
+
+tasks.named('compileVelocityJava', JavaCompile) {
+    options.release.set(17)
+}
+
+// Guard against reintroducing the Java 25 annotation-scanning failure in Velocity's Guice/ASM.
+def velocityPluginClass = layout.buildDirectory.file(
+        'classes/java/velocity/dbrighthd/wildfiregendermodplugin/VelocityPlugin.class')
+tasks.register('verifyVelocityBytecode') {
+    dependsOn tasks.named('compileVelocityJava')
+    inputs.file(velocityPluginClass)
+    doLast {
+        byte[] bytes = velocityPluginClass.get().asFile.bytes
+        int major = ((bytes[6] & 0xff) << 8) | (bytes[7] & 0xff)
+        if (major != 61) {
+            throw new GradleException('VelocityPlugin.class must be Java 17 / major 61, found major ' + major)
+        }
+    }
+}
+tasks.named('check') {
+    dependsOn tasks.named('verifyVelocityBytecode')
+}
+
 // Default JAR is the Paper backend plugin only.
 tasks.named('jar', Jar) {
     archiveBaseName.set('Female-Gender-Mod-Paper')
@@ -89,6 +121,6 @@ tasks.named('assemble') {
 
 processResources {
     filesMatching('plugin.yml') {
-        expand(version: project.version)
+        expand(version: pluginVersion)
     }
 }

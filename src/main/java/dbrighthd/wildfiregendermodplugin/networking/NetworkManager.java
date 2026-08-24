@@ -3,11 +3,10 @@ package dbrighthd.wildfiregendermodplugin.networking;
 import dbrighthd.wildfiregendermodplugin.GenderModPlugin;
 import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftInputStream;
 import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftOutputStream;
-import dbrighthd.wildfiregendermodplugin.networking.wildfire.ModSyncPacketV6;
+import dbrighthd.wildfiregendermodplugin.networking.wildfire.Beta4SyncPacketCodec;
 import dbrighthd.wildfiregendermodplugin.wildfire.ModConstants;
 import dbrighthd.wildfiregendermodplugin.wildfire.ModUser;
 import org.bukkit.entity.Player;
-import org.bukkit.plugin.messaging.PluginMessageRecipient;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -23,16 +22,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * Paper-side V6 synchronisation.
+ * Paper-side synchronisation for Female Gender Mod 5.0.0-Beta.4 / MC 26.2.
  *
- * <p>Each config change produces exactly one standard V6 clientbound profile
+ * <p>Each config change produces exactly one standard Beta.4 clientbound profile
  * packet for each player currently tracking that entity. The source client is
  * never sent its own profile: the official mod explicitly ignores it because
  * it already owns the authoritative local configuration.</p>
  */
 public final class NetworkManager {
     private final GenderModPlugin plugin;
-    private final ModSyncPacketV6 codec = new ModSyncPacketV6();
+    private final Beta4SyncPacketCodec codec = new Beta4SyncPacketCodec();
     private final ConcurrentMap<UUID, Integer> negotiatedVersions = new ConcurrentHashMap<>();
     private final Set<UUID> waitingForJoinSync = ConcurrentHashMap.newKeySet();
     /** Players whose local client has supplied a newer authoritative profile this session. */
@@ -53,8 +52,9 @@ public final class NetworkManager {
         }
     }
 
-    /** Handles the V6 hello packet during Paper's configuration stage. */
-    public void handleHello(UUID playerId, PluginMessageRecipient connection, byte[] message) {
+    /** Handles Beta.4's informational hello in the play phase. */
+    public void handleHello(Player player, byte[] message) {
+        UUID playerId = player.getUniqueId();
         if (message.length > 5) {
             return;
         }
@@ -63,28 +63,33 @@ public final class NetworkManager {
              ByteArrayOutputStream bytes = new ByteArrayOutputStream();
              CraftOutputStream output = new CraftOutputStream(bytes)) {
             int clientVersion = input.readVarInt();
+            if (input.available() != 0) {
+                return;
+            }
             if (clientVersion == ModConstants.SYNC_PROTOCOL_VERSION) {
                 negotiatedVersions.put(playerId, clientVersion);
             } else {
                 negotiatedVersions.remove(playerId);
+                plugin.getCustomLogger().warning(
+                        "Unsupported Female Gender Mod sync protocol %s from %s; expected Beta.4 protocol %s",
+                        clientVersion, player.getName(), ModConstants.SYNC_PROTOCOL_VERSION);
             }
 
             output.writeVarInt(ModConstants.SYNC_PROTOCOL_VERSION);
-            connection.sendPluginMessage(plugin, ModConstants.CLIENTBOUND_HELLO, bytes.toByteArray());
+            player.sendPluginMessage(plugin, ModConstants.CLIENTBOUND_HELLO, bytes.toByteArray());
         } catch (IOException ignored) {
             return;
         }
 
         // If a join event happened first, finish its one-shot initial sync now.
-        Player player = findOnline(playerId);
-        if (player != null && isV6(playerId) && waitingForJoinSync.remove(playerId)) {
+        if (isSupportedClient(playerId) && waitingForJoinSync.remove(playerId)) {
             scheduleInitialSync(player);
         }
     }
 
     /** Called once from PlayerJoinEvent; no recurring task is created. */
     public void onPlayerJoined(Player player) {
-        if (isV6(player.getUniqueId())) {
+        if (isSupportedClient(player.getUniqueId())) {
             scheduleInitialSync(player);
         } else {
             waitingForJoinSync.add(player.getUniqueId());
@@ -92,7 +97,7 @@ public final class NetworkManager {
     }
 
     /**
-     * Sends the tracked entity's one normal V6 profile packet to the tracking
+     * Sends the tracked entity's one normal Beta.4 profile packet to the tracking
      * player. This mirrors Fabric's EntityTrackingEvents.START_TRACKING path.
      */
     public void onStartTracking(Player recipient, Player tracked) {
@@ -101,7 +106,7 @@ public final class NetworkManager {
 
     /** Decodes, deduplicates, stores and relays a client-originated profile update. */
     public void onClientSync(Player sender, byte[] data) {
-        if (!isV6(sender.getUniqueId()) || data.length > ModConstants.MAX_SYNC_PAYLOAD_BYTES) {
+        if (data.length > ModConstants.MAX_SYNC_PAYLOAD_BYTES) {
             return;
         }
 
@@ -110,6 +115,11 @@ public final class NetworkManager {
             return;
         }
 
+        // A valid Beta.4 profile proves support even if hello raced behind it.
+        negotiatedVersions.put(sender.getUniqueId(), ModConstants.SYNC_PROTOCOL_VERSION);
+        if (waitingForJoinSync.remove(sender.getUniqueId())) {
+            scheduleInitialSync(sender);
+        }
         locallyOwnedProfiles.add(user.userId());
 
         byte[] clientbound;
@@ -170,7 +180,7 @@ public final class NetworkManager {
 
     /** Requests the joining player's cached profile from Velocity. */
     public void requestProfileFromVelocity(Player player) {
-        if (!isV6(player.getUniqueId()) || !isVelocityBridgeEnabled()) {
+        if (!isSupportedClient(player.getUniqueId()) || !isVelocityBridgeEnabled()) {
             return;
         }
 
@@ -189,7 +199,7 @@ public final class NetworkManager {
         plugin.getUserManager().getUsers().remove(userId);
     }
 
-    public boolean isV6(UUID userId) {
+    public boolean isSupportedClient(UUID userId) {
         return ModConstants.SYNC_PROTOCOL_VERSION == negotiatedVersions.getOrDefault(userId, -1);
     }
 
@@ -197,7 +207,7 @@ public final class NetworkManager {
         // One one-shot task ensures the client is in play phase and has registered
         // its clientbound sync receiver. This is not polling or per-tick work.
         plugin.getServer().getScheduler().runTask(plugin, () -> {
-            if (!player.isOnline() || !isV6(player.getUniqueId())) {
+            if (!player.isOnline() || !isSupportedClient(player.getUniqueId())) {
                 return;
             }
             sendInitialTrackedProfiles(player);
@@ -216,14 +226,14 @@ public final class NetworkManager {
 
     private void broadcastToTrackers(Player source, byte[] clientboundProfile) {
         for (Player recipient : source.getTrackedBy()) {
-            if (!recipient.equals(source) && isV6(recipient.getUniqueId())) {
+            if (!recipient.equals(source) && isSupportedClient(recipient.getUniqueId())) {
                 recipient.sendPluginMessage(plugin, ModConstants.CLIENTBOUND_SYNC, clientboundProfile);
             }
         }
     }
 
     private void sendProfile(Player recipient, UUID sourceId) {
-        if (recipient.getUniqueId().equals(sourceId) || !isV6(recipient.getUniqueId())) {
+        if (recipient.getUniqueId().equals(sourceId) || !isSupportedClient(recipient.getUniqueId())) {
             return;
         }
 
@@ -293,7 +303,9 @@ public final class NetworkManager {
     private ModUser deserializeServerbound(byte[] data, UUID senderId) {
         try (CraftInputStream input = CraftInputStream.ofBytes(data)) {
             return codec.read(input, senderId);
-        } catch (IOException ignored) {
+        } catch (IOException exception) {
+            plugin.getCustomLogger().debug(exception,
+                    "Rejected malformed Beta.4 sync payload from %s", senderId);
             return null;
         }
     }

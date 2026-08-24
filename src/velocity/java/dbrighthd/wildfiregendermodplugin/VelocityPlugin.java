@@ -29,7 +29,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Velocity bridge for Female Gender Mod V6 profile data.
+ * Velocity bridge for Female Gender Mod 5.0.0-Beta.4 profile data.
  *
  * <p>This standalone proxy plugin only accepts HMAC-authenticated messages
  * originating from a backend connection. It never forwards client payloads.</p>
@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Plugin(
         id = "female-gender-velocity",
         name = "Female Gender Mod Velocity Bridge",
-        version = "1.6.1",
+        version = "1.6.2",
         authors = {"EllanStudio"}
 )
 public final class VelocityPlugin {
@@ -70,7 +70,7 @@ public final class VelocityPlugin {
             return;
         }
         proxy.getChannelRegistrar().register(CHANNEL);
-        logger.info("Female Gender Mod Velocity Bridge v1.6.1 enabled");
+        logger.info("Female Gender Mod Velocity Bridge v1.6.2 enabled");
     }
 
     @Subscribe

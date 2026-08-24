@@ -20,34 +20,48 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Exact V6 / sync-protocol-v2 codec used by Female Gender Mod for MC 26.2.
+ * Exact packet codec used by Female Gender Mod 5.0.0-Beta.4 on MC 26.2.
  *
- * <p>This class intentionally supports only the mod's standard single-profile
- * payloads. A normal clientbound sync packet is {@code UUID + compact config};
- * inventing a batch prefix would make the official client reject the packet.</p>
+ * <p>Both directions use the same complete profile layout:</p>
+ * <pre>
+ * UUID, gender, bustSize, hurtSounds, voicePitch,
+ * breastPhysics, showInArmor, bounceMultiplier, floppiness,
+ * xOffset, yOffset, zOffset, uniboob, cleavage,
+ * skin-left UV, skin-right UV, overlay-left UV, overlay-right UV
+ * </pre>
+ *
+ * <p>There is no compact-MALE/present flag in Beta.4 and no custom batch
+ * framing. The protocol version advertised by its hello packet is 1.</p>
  */
-public final class ModSyncPacketV6 {
-    private static final float DEFAULT_BUOYANCY = 0.333F;
+public final class Beta4SyncPacketCodec {
+    private static final float DEFAULT_BUST_SIZE = 0.6F;
+    private static final float DEFAULT_VOICE_PITCH = 1.0F;
+    private static final float DEFAULT_BOUNCE_MULTIPLIER = 0.333F;
     private static final float DEFAULT_FLOPPINESS = 0.75F;
     private static final int MAX_UV_QUADS = UVDirection.values().length;
 
-    /** Reads the mod's serverbound compact config (the UUID comes from Bukkit). */
+    /** Reads a serverbound Beta.4 packet and verifies its embedded UUID. */
     public ModUser read(CraftInputStream input, UUID senderId) throws IOException {
-        if (!input.readBoolean()) {
-            return createDefaultUser(senderId);
+        UUID embeddedId = input.readUUID();
+        if (!senderId.equals(embeddedId)) {
+            throw new IOException("Profile UUID does not match sending player");
         }
-        return readFull(input, senderId);
+        ModUser user = readBody(input, senderId);
+        ensureFullyRead(input);
+        return user;
     }
 
-    /** Reads a normal clientbound V6 packet: UUID followed by compact config. */
+    /** Reads a clientbound (or proxy-cached) Beta.4 packet. */
     public ModUser readClientbound(byte[] data) throws IOException {
         try (CraftInputStream input = CraftInputStream.ofBytes(data)) {
             UUID userId = input.readUUID();
-            return read(input, userId);
+            ModUser user = readBody(input, userId);
+            ensureFullyRead(input);
+            return user;
         }
     }
 
-    /** Encodes the exact normal clientbound V6 packet expected by the mod. */
+    /** Encodes the complete Beta.4 clientbound profile. */
     public byte[] writeClientbound(ModUser user) throws IOException {
         try (ByteArrayOutputStream bytes = new ByteArrayOutputStream();
              CraftOutputStream output = new CraftOutputStream(bytes)) {
@@ -56,80 +70,77 @@ public final class ModSyncPacketV6 {
         }
     }
 
-    /** Writes the exact normal clientbound V6 packet: UUID plus compact config. */
+    /** Writes the complete Beta.4 profile shared by both packet directions. */
     public void write(ModUser user, CraftOutputStream output) throws IOException {
+        ModConfiguration config = user.configuration();
+        GeneralOptions general = config.generalOptions();
+        PhysicsOptions physics = config.physicsOptions();
+        BreastOptions breasts = config.breastOptions();
+
         output.writeUUID(user.userId());
-        writeCompactConfiguration(user.configuration(), output);
+        output.writeEnum(general.genderIdentity());
+        output.writeFloat(breasts.bustSize());
+        output.writeBoolean(general.hurtSounds());
+        output.writeFloat(general.voicePitch());
+
+        output.writeBoolean(physics.breastPhysics());
+        output.writeBoolean(physics.showInArmor());
+        output.writeFloat(physics.bounceMultiplier());
+        output.writeFloat(physics.floppiness());
+
+        output.writeFloat(breasts.xOffset());
+        output.writeFloat(breasts.yOffset());
+        output.writeFloat(breasts.zOffset());
+        output.writeBoolean(breasts.uniBoob());
+        output.writeFloat(breasts.cleavage());
+
+        writeUVLayouts(config.uvLayouts(), output);
     }
 
-    /** Official compact-MALE default used when the packet present flag is false. */
+    /** Official default profile used by Beta.4's server-side PlayerConfig. */
     public static ModUser createDefaultUser(UUID userId) {
         return new ModUser(userId, new ModConfiguration(
-                new GeneralOptions(GenderIdentities.MALE, true, 1.0F, true, true),
-                new PhysicsOptions(true, true, DEFAULT_BUOYANCY, DEFAULT_FLOPPINESS),
-                new BreastOptions(0.6F, 0.0F, 0.0F, 0.0F, true, 0.0F),
+                new GeneralOptions(GenderIdentities.MALE, true, DEFAULT_VOICE_PITCH),
+                new PhysicsOptions(true, true, DEFAULT_BOUNCE_MULTIPLIER, DEFAULT_FLOPPINESS),
+                new BreastOptions(DEFAULT_BUST_SIZE, 0.0F, 0.0F, 0.0F, true, 0.0F),
                 new UVLayouts(
                         new UVLayouts.Layer(new UVLayout(), new UVLayout()),
                         new UVLayouts.Layer(new UVLayout(), new UVLayout()))
         ));
     }
 
-    private static void writeCompactConfiguration(ModConfiguration config, CraftOutputStream output) throws IOException {
-        GeneralOptions general = config.generalOptions();
-        if (general.genderIdentity() == GenderIdentities.MALE) {
-            output.writeBoolean(false);
-            return;
-        }
-
-        output.writeBoolean(true);
-        output.writeEnum(general.genderIdentity());
-
-        BreastOptions breasts = config.breastOptions();
-        output.writeFloat(breasts.xOffset());
-        output.writeFloat(breasts.yOffset());
-        output.writeFloat(breasts.zOffset());
-        output.writeFloat(breasts.bustSize());
-        output.writeFloat(breasts.cleavage());
-
-        PhysicsOptions physics = config.physicsOptions();
-        output.writeBoolean(physics.breastPhysics());
-        if (physics.breastPhysics()) {
-            output.writeBoolean(breasts.uniBoob());
-            output.writeFloat(physics.buoyancy());
-            output.writeFloat(physics.floppiness());
-        }
-
-        writeUVLayouts(config.uvLayouts(), output);
-        output.writeBoolean(general.hurtSounds());
-        output.writeFloat(general.voicePitch());
-        output.writeBoolean(general.showInArmor());
-        output.writeBoolean(general.holidayThemes());
-    }
-
-    private static ModUser readFull(CraftInputStream input, UUID userId) throws IOException {
+    private static ModUser readBody(CraftInputStream input, UUID userId) throws IOException {
         GenderIdentities gender = readGender(input);
+        float bustSize = input.readFloat();
+        boolean hurtSounds = input.readBoolean();
+        float voicePitch = input.readFloat();
+
+        boolean physicsEnabled = input.readBoolean();
+        boolean showInArmor = input.readBoolean();
+        float bounceMultiplier = input.readFloat();
+        float floppiness = input.readFloat();
+
         float xOffset = input.readFloat();
         float yOffset = input.readFloat();
         float zOffset = input.readFloat();
-        float bustSize = input.readFloat();
+        boolean uniBoob = input.readBoolean();
         float cleavage = input.readFloat();
+        UVLayouts layouts = readUVLayouts(input);
 
-        boolean physicsEnabled = input.readBoolean();
-        boolean uniBoob = physicsEnabled && input.readBoolean();
-        float buoyancy = physicsEnabled ? input.readFloat() : DEFAULT_BUOYANCY;
-        float floppiness = physicsEnabled ? input.readFloat() : DEFAULT_FLOPPINESS;
-
-        UVLayouts uvLayouts = readUVLayouts(input);
-        boolean hurtSounds = input.readBoolean();
-        float voicePitch = input.readFloat();
-        boolean showInArmor = input.readBoolean();
-        boolean holidayThemes = input.readBoolean();
+        validateRange("bustSize", bustSize, 0.0F, 0.8F);
+        validateRange("voicePitch", voicePitch, 0.8F, 1.2F);
+        validateRange("bounceMultiplier", bounceMultiplier, 0.0F, 0.5F);
+        validateRange("floppiness", floppiness, 0.25F, 1.0F);
+        validateRange("xOffset", xOffset, -1.0F, 1.0F);
+        validateRange("yOffset", yOffset, -1.0F, 1.0F);
+        validateRange("zOffset", zOffset, -1.0F, 0.0F);
+        validateRange("cleavage", cleavage, 0.0F, 0.1F);
 
         return new ModUser(userId, new ModConfiguration(
-                new GeneralOptions(gender, hurtSounds, voicePitch, showInArmor, holidayThemes),
-                new PhysicsOptions(physicsEnabled, physicsEnabled, buoyancy, floppiness),
+                new GeneralOptions(gender, hurtSounds, voicePitch),
+                new PhysicsOptions(physicsEnabled, showInArmor, bounceMultiplier, floppiness),
                 new BreastOptions(bustSize, xOffset, yOffset, zOffset, uniBoob, cleavage),
-                uvLayouts
+                layouts
         ));
     }
 
@@ -184,6 +195,9 @@ public final class ModSyncPacketV6 {
             output.writeVarInt(0);
             return;
         }
+        if (quads.size() > MAX_UV_QUADS) {
+            throw new IOException("Too many UV quads: " + quads.size());
+        }
 
         output.writeVarInt(quads.size());
         for (Map.Entry<UVDirection, UVQuad> entry : quads.entrySet()) {
@@ -193,6 +207,18 @@ public final class ModSyncPacketV6 {
             output.writeVarInt(quad.y1());
             output.writeVarInt(quad.x2());
             output.writeVarInt(quad.y2());
+        }
+    }
+
+    private static void validateRange(String name, float value, float minimum, float maximum) throws IOException {
+        if (!Float.isFinite(value) || value < minimum || value > maximum) {
+            throw new IOException("Invalid " + name + ": " + value);
+        }
+    }
+
+    private static void ensureFullyRead(CraftInputStream input) throws IOException {
+        if (input.available() != 0) {
+            throw new IOException("Trailing bytes in sync payload: " + input.available());
         }
     }
 }

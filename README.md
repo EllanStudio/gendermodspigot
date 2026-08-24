@@ -1,6 +1,6 @@
 # Female Gender Mod — Paper / Velocity Bridge
 
-A **Paper-only** server companion for [Female Gender Mod](https://github.com/FemaleGenderMod/FemaleGenderMod), targeting **Minecraft 26.2** and sync protocol **v2** (Female Gender Mod 5.0.0-Beta.4+).
+A **Paper-only** server companion for [Female Gender Mod](https://github.com/FemaleGenderMod/FemaleGenderMod), targeting **Minecraft 26.2** and the exact sync protocol **1** used by **Female Gender Mod 5.0.0-Beta.4**.
 
 > This project deliberately does **not** support Spigot or BungeeCord. It uses Paper's entity-tracking API for efficient delivery and a separate Velocity bridge for cross-server profile handoff.
 
@@ -10,7 +10,7 @@ Each release has two independent plugin JARs. **Do not install the same JAR on b
 
 | File | Install location | Purpose |
 |---|---|---|
-| **Female-Gender-Mod-Paper-&lt;version&gt;.jar** | Every Paper backend's plugins directory | Receives and delivers standard V6 mod packets |
+| **Female-Gender-Mod-Paper-&lt;version&gt;.jar** | Every Paper backend's plugins directory | Receives and delivers Beta.4 protocol-1 profile packets |
 | **Female-Gender-Mod-Velocity-&lt;version&gt;.jar** | Velocity proxy's plugins directory | Optional cross-server profile bridge |
 
 Source JARs are for developers only.
@@ -20,8 +20,9 @@ Source JARs are for developers only.
 | Component | Required version |
 |---|---|
 | Backend | Paper 26.2+ |
-| Java | 25+ |
-| Client mod | Female Gender Mod 5.0.0-Beta.4+ with sync protocol v2 |
+| Paper Java | 25+ |
+| Velocity bridge bytecode | Java 17 compatible (class major 61) |
+| Client mod | Female Gender Mod 5.0.0-Beta.4 for MC 26.2 (sync protocol 1) |
 | Proxy (optional) | Velocity 4.1.0+ |
 
 ## Installation / 安装
@@ -45,11 +46,11 @@ The bridge ignores unsigned or incorrectly signed traffic, so a modded client ca
 
 ## Synchronisation behaviour / 同步行为
 
-- The official V6 wire format is used exactly: one clientbound packet contains **one player's UUID and compact configuration**.
+- The exact Beta.4 wire format is used: both directions contain **UUID plus the complete fixed profile**; there is no compact-MALE flag.
 - When a player changes their configuration, the backend sends that profile **once per player currently tracking that entity**.
 - The originating client is explicitly excluded: it already knows its own configuration, and the official mod ignores self-profile packets.
 - When entity tracking begins, the tracker receives the tracked player's current profile once.
-- The initial join handoff is a one-shot task after the V6 hello handshake; there is **no tick loop, polling, debounce timer, or custom batch frame**.
+- Beta.4's hello runs in the play phase and advertises protocol **1**. The initial handoff uses one one-shot task; there is **no server tick loop, polling, debounce timer, or custom batch frame**.
 - Physical packets are necessarily point-to-point, but delivery is limited to nearby/tracking players instead of all online players.
 
 For a Velocity network, the bridge keeps the latest opaque standard profile in memory and returns it when that player joins another backend. It does not persist profiles across proxy restarts.
@@ -58,6 +59,7 @@ For a Velocity network, the bridge keeps the latest opaque standard profile in m
 
 ~~~powershell
 $env:JAVA_HOME = 'D:/graalvm-jdk-25.0.2+10.1' # or another Java 25 JDK
+# Paper classes compile to Java 25; the Velocity source set is emitted as Java 17 bytecode.
 ./gradlew.bat clean build
 ~~~
 
