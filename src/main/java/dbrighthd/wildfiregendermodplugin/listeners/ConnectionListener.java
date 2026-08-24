@@ -1,6 +1,7 @@
 package dbrighthd.wildfiregendermodplugin.listeners;
 
 import dbrighthd.wildfiregendermodplugin.GenderModPlugin;
+import io.papermc.paper.event.player.PlayerTrackEntityEvent;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -8,12 +9,13 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 
-import java.util.UUID;
-
 /**
- * Handles join/quit: request full snapshot on join, cleanup on quit.
+ * Paper lifecycle and tracking hooks.
+ *
+ * Profile delivery is scoped to Paper's entity tracking graph, exactly as the
+ * official Fabric implementation does. No all-online-player broadcast occurs.
  */
-public class ConnectionListener implements Listener {
+public final class ConnectionListener implements Listener {
     private final GenderModPlugin plugin;
 
     public ConnectionListener(GenderModPlugin plugin) {
@@ -22,15 +24,18 @@ public class ConnectionListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     private void onPlayerJoin(PlayerJoinEvent event) {
-        Player player = event.getPlayer();
-        plugin.getTickScheduler().markNeedsSnapshot(player);
-        plugin.getNetworkManager().requestProxyData(player);
+        plugin.getNetworkManager().onPlayerJoined(event.getPlayer());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    private void onStartTracking(PlayerTrackEntityEvent event) {
+        if (event.getEntity() instanceof Player tracked) {
+            plugin.getNetworkManager().onStartTracking(event.getPlayer(), tracked);
+        }
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     private void onPlayerQuit(PlayerQuitEvent event) {
-        UUID uuid = event.getPlayer().getUniqueId();
-        plugin.getUserManager().getUsers().remove(uuid);
-        plugin.getNetworkManager().removeNegotiation(uuid);
+        plugin.getNetworkManager().removePlayer(event.getPlayer().getUniqueId());
     }
 }

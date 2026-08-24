@@ -1,35 +1,27 @@
 package dbrighthd.wildfiregendermodplugin.wildfire;
 
 /**
- * Channel and protocol constants for MC 26.2 / mod 5.0.0-Beta.4+.
- * Uses sync protocol v2 with hello handshake during configuration phase.
- * <p>
- * Cross-server forwarding supports both Velocity and BungeeCord proxies
- * via the standard "BungeeCord" plugin messaging channel (server→proxy).
- * <p>
- * The dedicated Velocity plugin uses Velocity's own proxy messaging API
- * for server→proxy→server routing.
+ * V6 protocol constants for the Paper backend plugin.
+ *
+ * The proxy channel is private to the companion Velocity bridge; it is not a
+ * BungeeCord compatibility channel and must never be exposed to clients.
  */
 public final class ModConstants {
     public static final String MOD_ID = "wildfire_gender";
 
-    // V6 channels (mod sync protocol v2)
     public static final String SERVERBOUND_HELLO = MOD_ID + ":serverbound/hello";
     public static final String CLIENTBOUND_HELLO = MOD_ID + ":clientbound/hello";
     public static final String SERVERBOUND_SYNC = MOD_ID + ":serverbound/sync";
     public static final String CLIENTBOUND_SYNC = MOD_ID + ":clientbound/sync";
-
     public static final int SYNC_PROTOCOL_VERSION = 2;
 
-    // Proxy→server channel (BungeeCord/Velocity standard)
-    public static final String PROXY_CHANNEL = "BungeeCord";
+    /** Custom backend <-> Velocity bridge channel. */
+    public static final String PROXY_CHANNEL = MOD_ID + ":proxy";
+    public static final byte PROXY_PROFILE_SYNC = 1;
+    public static final byte PROXY_PROFILE_REQUEST = 2;
 
-    // Cross-server sub-commands
-    public static final String CROSS_SYNC = "ModSync";
-    public static final String CROSS_REQUEST = "ModSync:RequestAll";
+    public static final int MAX_SYNC_PAYLOAD_BYTES = 32 * 1024;
 
-    // Velocity plugin channel (plugin messages between proxies and servers)
-    public static final String VELOCITY_CHANNEL = "wildfire_gender";
-
-    private ModConstants() {}
+    private ModConstants() {
+    }
 }

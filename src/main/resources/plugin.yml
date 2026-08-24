@@ -1,7 +1,6 @@
-name: Female-Gender-Mod-Plugin
-version: '1.6.0'
+name: Female-Gender-Mod-Paper
+version: '${version}'
 main: dbrighthd.wildfiregendermodplugin.GenderModPlugin
-api-version: '1.21'
-description: Plugin companion for Wildfire's Female Gender Mod — MC 26.2 / sync protocol v2
-authors: [dbrighthd]
-softdepend: [Plan, Vault]
+api-version: '26.2'
+description: Paper backend companion for Female Gender Mod — MC 26.2 / sync protocol v2
+authors: [EllanStudio]

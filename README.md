@@ -1,65 +1,75 @@
-# Female-Gender-Mod-Plugin
+# Female Gender Mod — Paper / Velocity Bridge
 
-A Paper / Spigot plugin that syncs player gender data between clients using Wildfire's Female Gender Mod and the server.
+A **Paper-only** server companion for [Female Gender Mod](https://github.com/FemaleGenderMod/FemaleGenderMod), targeting **Minecraft 26.2** and sync protocol **v2** (Female Gender Mod 5.0.0-Beta.4+).
 
-Supports MC 26.2+ with mod sync protocol v2 (mod 5.0.0-Beta.4+).
+> This project deliberately does **not** support Spigot or BungeeCord. It uses Paper's entity-tracking API for efficient delivery and a separate Velocity bridge for cross-server profile handoff.
 
-Replaces the old Fabric-only sync on Spigot/Paper servers, with full cross-server support via Velocity or BungeeCord proxies.
+## Downloads
 
-## Installation
+Each release has two independent plugin JARs. **Do not install the same JAR on both platforms.**
 
-### Prerequisites
+| File | Install location | Purpose |
+|---|---|---|
+| **Female-Gender-Mod-Paper-&lt;version&gt;.jar** | Every Paper backend's plugins directory | Receives and delivers standard V6 mod packets |
+| **Female-Gender-Mod-Velocity-&lt;version&gt;.jar** | Velocity proxy's plugins directory | Optional cross-server profile bridge |
 
-| Requirement | Version |
-|-------------|---------|
-| Minecraft Server | Paper 26.2+ (or Spigot 1.21.1+) |
+Source JARs are for developers only.
+
+## Requirements
+
+| Component | Required version |
+|---|---|
+| Backend | Paper 26.2+ |
 | Java | 25+ |
-| Female Gender Mod (client) | 5.0.0-Beta.4+ |
+| Client mod | Female Gender Mod 5.0.0-Beta.4+ with sync protocol v2 |
+| Proxy (optional) | Velocity 4.1.0+ |
 
-### Single Server Setup
+## Installation / 安装
 
-1. Download the latest JAR from the Releases page
-2. Place `Female-Gender-Mod-Plugin-1.6.0.jar` into your server's `plugins/` directory
-3. Restart the server
-4. Done! Players with the mod installed will now have their data synced automatically
+### Single Paper server
 
-### Cross-Server Setup (Velocity / BungeeCord)
+1. Download **Female-Gender-Mod-Paper-&lt;version&gt;.jar** from [Releases](https://github.com/EllanStudio/gendermodspigot/releases).
+2. Put it in the Paper server's plugins directory.
+3. Restart Paper.
+4. Players with the supported client mod sync automatically; no client-side server configuration is required.
 
-#### Step 1: Install on each Paper/Spigot backend
+### Velocity network
 
-Install `Female-Gender-Mod-Plugin-1.6.0.jar` on every backend server.
+1. Install **Female-Gender-Mod-Paper-&lt;version&gt;.jar** in **every** Paper backend's plugins directory.
+2. Install **Female-Gender-Mod-Velocity-&lt;version&gt;.jar** only in Velocity's plugins directory.
+3. On first proxy startup, edit **plugins/female-gender-velocity/config.properties** and set **shared-secret** to a long random value.
+4. Set the identical value at **velocity.shared-secret** in every Paper plugin's config.yml.
+5. Restart the proxy and all backends.
 
-#### Step 2: Install on the Proxy
+The bridge ignores unsigned or incorrectly signed traffic, so a modded client cannot impersonate the proxy. The bridge uses the private **wildfire_gender:proxy** plugin channel and does not require BungeeCord compatibility mode or a Bungee plugin.
 
-**For Velocity:**
+## Synchronisation behaviour / 同步行为
 
-1. Download the JAR (same file) to your Velocity plugins directory
-2. The plugin registers itself as a Velocity plugin via `@Plugin` annotation
-3. Start Velocity - the plugin will automatically handle cross-server forwarding
+- The official V6 wire format is used exactly: one clientbound packet contains **one player's UUID and compact configuration**.
+- When a player changes their configuration, the backend sends that profile **once per player currently tracking that entity**.
+- The originating client is explicitly excluded: it already knows its own configuration, and the official mod ignores self-profile packets.
+- When entity tracking begins, the tracker receives the tracked player's current profile once.
+- The initial join handoff is a one-shot task after the V6 hello handshake; there is **no tick loop, polling, debounce timer, or custom batch frame**.
+- Physical packets are necessarily point-to-point, but delivery is limited to nearby/tracking players instead of all online players.
 
-**For BungeeCord:**
+For a Velocity network, the bridge keeps the latest opaque standard profile in memory and returns it when that player joins another backend. It does not persist profiles across proxy restarts.
 
-The Paper plugin uses the standard `BungeeCord` plugin messaging channel, which BungeeCord natively supports. No additional plugin needed on BungeeCord.
+## Build
 
-#### Step 3: Configure Cross-Server
+~~~powershell
+$env:JAVA_HOME = 'D:/graalvm-jdk-25.0.2+10.1' # or another Java 25 JDK
+./gradlew.bat clean build
+~~~
 
-Each backend server needs to be registered in the proxy config as a distinct server. The plugin uses `RegisteredServer.getServerInfo().getName()` to identify which server a message came from and where to forward it.
+Artifacts:
 
-### Client-Side
-
-Players must have Wildfire's Female Gender Mod 5.0.0-Beta.4+ installed on their client.
-
-## Build Instructions
-
-```bash
-git clone https://github.com/dbrighthd/gendermodspigot.git
-cd gendermodspigot
-gradlew.bat build
-```
-
-The built JAR will be at `build/libs/Female-Gender-Mod-Plugin-1.6.0.jar`.
+~~~text
+build/libs/Female-Gender-Mod-Paper-&lt;version&gt;.jar
+build/libs/Female-Gender-Mod-Paper-&lt;version&gt;-sources.jar
+build/libs/Female-Gender-Mod-Velocity-&lt;version&gt;.jar
+build/libs/Female-Gender-Mod-Velocity-&lt;version&gt;-sources.jar
+~~~
 
 ## License
 
-This project is a community plugin and is not affiliated with Wildfire's Female Gender Mod.
-The mod is required on the client side for this plugin to function.
+This is a community plugin and is not affiliated with Female Gender Mod. Female Gender Mod remains required on clients for synchronisation to work.

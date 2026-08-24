@@ -1,13 +1,15 @@
-# Female-Gender-Mod-Plugin Configuration
-# MC 26.2 only — mod sync protocol v2
+# Female Gender Mod Paper backend plugin
+#
+# Cross-server synchronisation is event-driven and is enabled by installing the
+# separate Female-Gender-Mod-Velocity JAR on a Velocity proxy. There is no
+# broadcast interval, polling task, or tick scheduler.
+#
+# Set the SAME non-empty random secret in this file on every Paper backend and
+# in the Velocity bridge's config.properties. Leaving it blank safely disables
+# cross-server traffic while single-server sync keeps working.
+velocity:
+  shared-secret: ""
 
-# Cross-server sync via Velocity/BungeeCord
-# When true, player data is forwarded across servers
-crossServer:
+logging:
   enabled: true
-  # How often (in seconds) to broadcast full state to proxy
-  broadcastInterval: 60
-
-# Debug logging
-debug:
-  logSyncPackets: false
+  debug: false

@@ -3,35 +3,35 @@ package dbrighthd.wildfiregendermodplugin.networking.wildfire;
 import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftInputStream;
 import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftOutputStream;
 import dbrighthd.wildfiregendermodplugin.wildfire.ModUser;
-import dbrighthd.wildfiregendermodplugin.wildfire.setup.*;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.BreastOptions;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.GeneralOptions;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.GenderIdentities;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.ModConfiguration;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.PhysicsOptions;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.UVDirection;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.UVLayout;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.UVLayouts;
+import dbrighthd.wildfiregendermodplugin.wildfire.setup.UVQuad;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.*;
+import java.util.EnumMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
- * V6 packet format — mod sync protocol v2 (MC 26.2, mod 5.0.0-Beta.4+).
- * <p>
- * Single-user formats (for client-server point-to-point):
- * <ul>
- *   <li>{@link #read} — reads serverbound payload (boolean present, then full config or default)</li>
- *   <li>{@link #readClientbound} — reads clientbound payload (UUID + config, for cross-server)</li>
- *   <li>{@link #write} — writes clientbound payload (UUID + config)</li>
- * </ul>
- * <p>
- * Batch formats (for server broadcast, single packet carrying multiple users):
- * <ul>
- *   <li>{@link #writeBatch} — writes multiple users into one consolidated packet</li>
- *   <li>{@link #readBatch} — reads a batch packet containing multiple users</li>
- * </ul>
+ * Exact V6 / sync-protocol-v2 codec used by Female Gender Mod for MC 26.2.
+ *
+ * <p>This class intentionally supports only the mod's standard single-profile
+ * payloads. A normal clientbound sync packet is {@code UUID + compact config};
+ * inventing a batch prefix would make the official client reject the packet.</p>
  */
 public final class ModSyncPacketV6 {
+    private static final float DEFAULT_BUOYANCY = 0.333F;
+    private static final float DEFAULT_FLOPPINESS = 0.75F;
+    private static final int MAX_UV_QUADS = UVDirection.values().length;
 
-    public static final int VERSION = 6;
-
-    public ModSyncPacketV6() {}
-
-    // ===== Single-user serverbound (client → server) =====
-
+    /** Reads the mod's serverbound compact config (the UUID comes from Bukkit). */
     public ModUser read(CraftInputStream input, UUID senderId) throws IOException {
         if (!input.readBoolean()) {
             return createDefaultUser(senderId);
@@ -39,178 +39,160 @@ public final class ModSyncPacketV6 {
         return readFull(input, senderId);
     }
 
-    // ===== Single-user clientbound (for cross-server forwarding) =====
-
+    /** Reads a normal clientbound V6 packet: UUID followed by compact config. */
     public ModUser readClientbound(byte[] data) throws IOException {
         try (CraftInputStream input = CraftInputStream.ofBytes(data)) {
-            UUID uuid = input.readUUID();
-            if (!input.readBoolean()) {
-                return createDefaultUser(uuid);
-            }
-            return readFull(input, uuid);
+            UUID userId = input.readUUID();
+            return read(input, userId);
         }
     }
 
+    /** Encodes the exact normal clientbound V6 packet expected by the mod. */
     public byte[] writeClientbound(ModUser user) throws IOException {
-        try (java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-             CraftOutputStream output = new CraftOutputStream(baos)) {
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+             CraftOutputStream output = new CraftOutputStream(bytes)) {
             write(user, output);
-            return baos.toByteArray();
+            return bytes.toByteArray();
         }
     }
 
-    /**
-     * Writes clientbound payload: UUID + compact config.
-     * MALE players use the compact path (boolean=false).
-     */
+    /** Writes the exact normal clientbound V6 packet: UUID plus compact config. */
     public void write(ModUser user, CraftOutputStream output) throws IOException {
-        ModConfiguration cfg = user.configuration();
-        GeneralOptions g = cfg.generalOptions();
-        PhysicsOptions p = cfg.physicsOptions();
-        BreastOptions b = cfg.breastOptions();
-        UVLayouts u = cfg.uvLayouts();
-
         output.writeUUID(user.userId());
-        boolean male = g.genderIdentity() == GenderIdentities.MALE;
-        output.writeBoolean(!male);
-        if (male) return;
-
-        output.writeEnum(g.genderIdentity());
-        output.writeFloat(b.xOffset());
-        output.writeFloat(b.yOffset());
-        output.writeFloat(b.zOffset());
-        output.writeFloat(b.bustSize());
-        output.writeFloat(b.cleavage());
-        output.writeBoolean(p.breastPhysics());
-        if (p.breastPhysics()) {
-            output.writeBoolean(b.uniBoob());
-            output.writeFloat(p.buoyancy());
-            output.writeFloat(p.floppiness());
-        }
-        writeUVLayouts(u, output);
-        output.writeBoolean(g.hurtSounds());
-        output.writeFloat(g.voicePitch());
-        output.writeBoolean(g.showInArmor());
-        output.writeBoolean(g.holidayThemes());
+        writeCompactConfiguration(user.configuration(), output);
     }
 
-    // ===== Batch broadcast (server → all clients, single packet) =====
-
-    /**
-     * Writes multiple users into a single consolidated broadcast packet.
-     * Format: VarInt(count) + [UUID + present + data] * count
-     */
-    public byte[] writeBatch(Collection<ModUser> users) throws IOException {
-        try (java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-             CraftOutputStream output = new CraftOutputStream(baos)) {
-            output.writeVarInt(users.size());
-            for (ModUser user : users) {
-                write(user, output);
-            }
-            return baos.toByteArray();
-        }
-    }
-
-    /**
-     * Reads a batch broadcast packet into a map of UUID → ModUser.
-     */
-    public Map<UUID, ModUser> readBatch(byte[] data) throws IOException {
-        Map<UUID, ModUser> users = new LinkedHashMap<>();
-        try (CraftInputStream input = CraftInputStream.ofBytes(data)) {
-            int count = input.readVarInt();
-            for (int i = 0; i < count; i++) {
-                UUID uuid = input.readUUID();
-                if (!input.readBoolean()) {
-                    users.put(uuid, createDefaultUser(uuid));
-                } else {
-                    users.put(uuid, readFull(input, uuid));
-                }
-            }
-        }
-        return users;
-    }
-
-    // ===== Default factory =====
-
-    public ModUser createDefaultUser(UUID uuid) {
-        return new ModUser(uuid, new ModConfiguration(
-                new GeneralOptions(GenderIdentities.MALE, true, 1.0f, true, true),
-                new PhysicsOptions(false, false, 0.333f, 0.75f),
-                new BreastOptions(0.6f, 0.0f, 0.0f, 0.0f, true, 0.0f),
+    /** Official compact-MALE default used when the packet present flag is false. */
+    public static ModUser createDefaultUser(UUID userId) {
+        return new ModUser(userId, new ModConfiguration(
+                new GeneralOptions(GenderIdentities.MALE, true, 1.0F, true, true),
+                new PhysicsOptions(true, true, DEFAULT_BUOYANCY, DEFAULT_FLOPPINESS),
+                new BreastOptions(0.6F, 0.0F, 0.0F, 0.0F, true, 0.0F),
                 new UVLayouts(
                         new UVLayouts.Layer(new UVLayout(), new UVLayout()),
-                        new UVLayouts.Layer(new UVLayout(), new UVLayout()))));
+                        new UVLayouts.Layer(new UVLayout(), new UVLayout()))
+        ));
     }
 
-    // ===== Private helpers =====
+    private static void writeCompactConfiguration(ModConfiguration config, CraftOutputStream output) throws IOException {
+        GeneralOptions general = config.generalOptions();
+        if (general.genderIdentity() == GenderIdentities.MALE) {
+            output.writeBoolean(false);
+            return;
+        }
 
-    private ModUser readFull(CraftInputStream input, UUID uuid) throws IOException {
-        GenderIdentities gender = input.readEnum(GenderIdentities.class);
+        output.writeBoolean(true);
+        output.writeEnum(general.genderIdentity());
+
+        BreastOptions breasts = config.breastOptions();
+        output.writeFloat(breasts.xOffset());
+        output.writeFloat(breasts.yOffset());
+        output.writeFloat(breasts.zOffset());
+        output.writeFloat(breasts.bustSize());
+        output.writeFloat(breasts.cleavage());
+
+        PhysicsOptions physics = config.physicsOptions();
+        output.writeBoolean(physics.breastPhysics());
+        if (physics.breastPhysics()) {
+            output.writeBoolean(breasts.uniBoob());
+            output.writeFloat(physics.buoyancy());
+            output.writeFloat(physics.floppiness());
+        }
+
+        writeUVLayouts(config.uvLayouts(), output);
+        output.writeBoolean(general.hurtSounds());
+        output.writeFloat(general.voicePitch());
+        output.writeBoolean(general.showInArmor());
+        output.writeBoolean(general.holidayThemes());
+    }
+
+    private static ModUser readFull(CraftInputStream input, UUID userId) throws IOException {
+        GenderIdentities gender = readGender(input);
         float xOffset = input.readFloat();
         float yOffset = input.readFloat();
         float zOffset = input.readFloat();
         float bustSize = input.readFloat();
         float cleavage = input.readFloat();
+
         boolean physicsEnabled = input.readBoolean();
-        boolean uniboob = physicsEnabled && input.readBoolean();
-        float buoyancy = physicsEnabled ? input.readFloat() : 0.333f;
-        float floppiness = physicsEnabled ? input.readFloat() : 0.75f;
+        boolean uniBoob = physicsEnabled && input.readBoolean();
+        float buoyancy = physicsEnabled ? input.readFloat() : DEFAULT_BUOYANCY;
+        float floppiness = physicsEnabled ? input.readFloat() : DEFAULT_FLOPPINESS;
+
         UVLayouts uvLayouts = readUVLayouts(input);
         boolean hurtSounds = input.readBoolean();
         float voicePitch = input.readFloat();
         boolean showInArmor = input.readBoolean();
         boolean holidayThemes = input.readBoolean();
 
-        return new ModUser(uuid, new ModConfiguration(
+        return new ModUser(userId, new ModConfiguration(
                 new GeneralOptions(gender, hurtSounds, voicePitch, showInArmor, holidayThemes),
                 new PhysicsOptions(physicsEnabled, physicsEnabled, buoyancy, floppiness),
-                new BreastOptions(bustSize, xOffset, yOffset, zOffset, uniboob, cleavage),
-                uvLayouts));
+                new BreastOptions(bustSize, xOffset, yOffset, zOffset, uniBoob, cleavage),
+                uvLayouts
+        ));
     }
 
-    private UVLayouts readUVLayouts(CraftInputStream input) throws IOException {
+    private static GenderIdentities readGender(CraftInputStream input) throws IOException {
+        GenderIdentities[] values = GenderIdentities.values();
+        return values[Math.floorMod(input.readVarInt(), values.length)];
+    }
+
+    private static UVLayouts readUVLayouts(CraftInputStream input) throws IOException {
         return new UVLayouts(readLayer(input), readLayer(input));
     }
 
-    private UVLayouts.Layer readLayer(CraftInputStream input) throws IOException {
+    private static UVLayouts.Layer readLayer(CraftInputStream input) throws IOException {
         return new UVLayouts.Layer(readUVLayout(input), readUVLayout(input));
     }
 
-    private UVLayout readUVLayout(CraftInputStream input) throws IOException {
+    private static UVLayout readUVLayout(CraftInputStream input) throws IOException {
         int count = input.readVarInt();
+        if (count < 0 || count > MAX_UV_QUADS) {
+            throw new IOException("Invalid UV quad count: " + count);
+        }
+
         Map<UVDirection, UVQuad> quads = new EnumMap<>(UVDirection.class);
         for (int i = 0; i < count; i++) {
-            quads.put(UVDirection.byId(input.readVarInt()),
-                    new UVQuad(input.readVarInt(), input.readVarInt(),
-                               input.readVarInt(), input.readVarInt()));
+            UVDirection direction = readDirection(input);
+            quads.put(direction, new UVQuad(
+                    input.readVarInt(), input.readVarInt(),
+                    input.readVarInt(), input.readVarInt()
+            ));
         }
         return new UVLayout(quads);
     }
 
-    private void writeUVLayouts(UVLayouts uv, CraftOutputStream out) throws IOException {
-        writeLayer(uv != null ? uv.skin() : null, out);
-        writeLayer(uv != null ? uv.overlay() : null, out);
+    private static UVDirection readDirection(CraftInputStream input) throws IOException {
+        UVDirection[] values = UVDirection.values();
+        return values[Math.floorMod(input.readVarInt(), values.length)];
     }
 
-    private void writeLayer(UVLayouts.Layer layer, CraftOutputStream out) throws IOException {
-        writeUVLayout(layer != null ? layer.left() : null, out);
-        writeUVLayout(layer != null ? layer.right() : null, out);
+    private static void writeUVLayouts(UVLayouts layouts, CraftOutputStream output) throws IOException {
+        writeLayer(layouts == null ? null : layouts.skin(), output);
+        writeLayer(layouts == null ? null : layouts.overlay(), output);
     }
 
-    private void writeUVLayout(UVLayout layout, CraftOutputStream out) throws IOException {
-        Map<UVDirection, UVQuad> quads = layout != null ? layout.getQuads() : null;
+    private static void writeLayer(UVLayouts.Layer layer, CraftOutputStream output) throws IOException {
+        writeUVLayout(layer == null ? null : layer.left(), output);
+        writeUVLayout(layer == null ? null : layer.right(), output);
+    }
+
+    private static void writeUVLayout(UVLayout layout, CraftOutputStream output) throws IOException {
+        Map<UVDirection, UVQuad> quads = layout == null ? null : layout.getQuads();
         if (quads == null || quads.isEmpty()) {
-            out.writeVarInt(0);
+            output.writeVarInt(0);
             return;
         }
-        out.writeVarInt(quads.size());
-        for (Map.Entry<UVDirection, UVQuad> e : quads.entrySet()) {
-            out.writeVarInt(e.getKey().ordinal());
-            UVQuad q = e.getValue();
-            out.writeVarInt(q.x1());
-            out.writeVarInt(q.y1());
-            out.writeVarInt(q.x2());
-            out.writeVarInt(q.y2());
+
+        output.writeVarInt(quads.size());
+        for (Map.Entry<UVDirection, UVQuad> entry : quads.entrySet()) {
+            output.writeVarInt(entry.getKey().ordinal());
+            UVQuad quad = entry.getValue();
+            output.writeVarInt(quad.x1());
+            output.writeVarInt(quad.y1());
+            output.writeVarInt(quad.x2());
+            output.writeVarInt(quad.y2());
         }
     }
 }

@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'dbrighthd'
-version = '1.6.0'
+version = '1.6.1'
 
 java {
     toolchain {
@@ -18,20 +18,26 @@ repositories {
         name = 'papermc'
         url = uri('https://repo.papermc.io/repository/maven-public/')
     }
-    flatDir {
-        dirs 'libs'
+}
+
+sourceSets {
+    // Gradle convention automatically maps this to src/velocity/java and src/velocity/resources.
+    velocity {
     }
 }
 
 dependencies {
-    compileOnly files('libs/spigot-api.jar')
+    // Paper backend plugin: no local Spigot API dependency.
     compileOnly 'io.papermc.paper:paper-api:26.2.build.+'
-    compileOnly 'com.velocitypowered:velocity-api:4.1.0-SNAPSHOT'
-    annotationProcessor 'com.velocitypowered:velocity-api:4.1.0-SNAPSHOT'
     compileOnly 'org.jetbrains:annotations:24.0.1'
 
+    // Dedicated Velocity bridge source set.
+    velocityCompileOnly 'com.velocitypowered:velocity-api:4.1.0-SNAPSHOT'
+    velocityCompileOnly 'javax.inject:javax.inject:1'
+    velocityAnnotationProcessor 'com.velocitypowered:velocity-api:4.1.0-SNAPSHOT'
+
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
-    testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.3'
 }
 
@@ -39,14 +45,50 @@ test {
     useJUnitPlatform()
 }
 
-jar {
-    archiveBaseName = 'Female-Gender-Mod-Plugin'
-    archiveClassifier = ''
-    archiveVersion = version
+// Keep Paper API migrations visible during development.
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs.add('-Xlint:deprecation')
+}
+
+// Default JAR is the Paper backend plugin only.
+tasks.named('jar', Jar) {
+    archiveBaseName.set('Female-Gender-Mod-Paper')
+    archiveClassifier.set('')
+    archiveVersion.set(project.version.toString())
+}
+
+tasks.named('sourcesJar', Jar) {
+    archiveBaseName.set('Female-Gender-Mod-Paper')
+    archiveClassifier.set('sources')
+    archiveVersion.set(project.version.toString())
+}
+
+// Velocity has a separate classpath and its own generated velocity-plugin.json.
+tasks.register('velocityJar', Jar) {
+    group = 'build'
+    description = 'Assembles the standalone Velocity bridge plugin.'
+    archiveBaseName.set('Female-Gender-Mod-Velocity')
+    archiveClassifier.set('')
+    archiveVersion.set(project.version.toString())
+    from(sourceSets.velocity.output)
+}
+
+tasks.register('velocitySourcesJar', Jar) {
+    group = 'build'
+    description = 'Assembles sources for the Velocity bridge plugin.'
+    archiveBaseName.set('Female-Gender-Mod-Velocity')
+    archiveClassifier.set('sources')
+    archiveVersion.set(project.version.toString())
+    from(sourceSets.velocity.allSource)
+}
+
+tasks.named('assemble') {
+    dependsOn tasks.named('velocityJar')
+    dependsOn tasks.named('velocitySourcesJar')
 }
 
 processResources {
     filesMatching('plugin.yml') {
-        expand([version: version])
+        expand(version: project.version)
     }
 }
