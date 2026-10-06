@@ -2,6 +2,7 @@ package dbrighthd.wildfiregendermodplugin.networking;
 
 import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftInputStream;
 import dbrighthd.wildfiregendermodplugin.networking.wildfire.Beta4SyncPacketCodec;
+import dbrighthd.wildfiregendermodplugin.networking.wildfire.Protocol2SyncPacketCodec;
 import dbrighthd.wildfiregendermodplugin.wildfire.ModConstants;
 import dbrighthd.wildfiregendermodplugin.wildfire.ModUser;
 import dbrighthd.wildfiregendermodplugin.wildfire.setup.BreastOptions;
@@ -29,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Regression tests copied from the 5.0.0-Beta.4 AbstractSyncPacket field order. */
 class ProtocolTest {
     private final Beta4SyncPacketCodec codec = new Beta4SyncPacketCodec();
+    private final Protocol2SyncPacketCodec protocol2 = new Protocol2SyncPacketCodec();
 
     @Test
     void usesExactBeta4ChannelsAndHelloVersion() {
@@ -37,6 +39,68 @@ class ProtocolTest {
         assertEquals("wildfire_gender:send_gender_info", ModConstants.SERVERBOUND_SYNC);
         assertEquals("wildfire_gender:sync", ModConstants.CLIENTBOUND_SYNC);
         assertEquals(1, ModConstants.SYNC_PROTOCOL_VERSION);
+    }
+
+    @Test
+    void usesExactModernChannelsAndVersion() {
+        assertEquals("female_gender_mod:serverbound/hello", ModConstants.MODERN_SERVERBOUND_HELLO);
+        assertEquals("female_gender_mod:clientbound/hello", ModConstants.MODERN_CLIENTBOUND_HELLO);
+        assertEquals("female_gender_mod:serverbound/sync", ModConstants.MODERN_SERVERBOUND_SYNC);
+        assertEquals("female_gender_mod:clientbound/sync", ModConstants.MODERN_CLIENTBOUND_SYNC);
+        assertEquals(2, ModConstants.MODERN_SYNC_PROTOCOL_VERSION);
+    }
+
+    @Test
+    void protocol2MaleProfileUsesOnlyCompactPresentFlag() throws IOException {
+        UUID uid = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff");
+        ModUser male = Protocol2SyncPacketCodec.createDefaultUser(uid);
+        byte[] serverbound = protocol2.writeServerbound(male);
+        assertEquals(1, serverbound.length);
+        assertEquals(0, serverbound[0]);
+        assertEquals(uid, protocol2.readServerbound(serverbound, uid).userId());
+
+        byte[] clientbound = protocol2.writeClientbound(male);
+        assertEquals(17, clientbound.length);
+        assertEquals(uid, protocol2.readClientbound(clientbound).userId());
+    }
+
+    @Test
+    void protocol2FemaleProfileUsesConditionalPhysicsAndExactFieldOrder() throws IOException {
+        UUID uid = UUID.randomUUID();
+        GeneralOptions general = new GeneralOptions(GenderIdentities.FEMALE, true, 1.2F);
+        PhysicsOptions physics = new PhysicsOptions(true, true, 0.4F, 0.9F);
+        BreastOptions breasts = new BreastOptions(0.7F, 0.1F, 0.2F, -0.3F, true, 0.04F);
+        Map<UVDirection, UVQuad> quads = new EnumMap<>(UVDirection.class);
+        quads.put(UVDirection.NORTH, new UVQuad(1, 2, 3, 4));
+        UVLayout layout = new UVLayout(quads);
+        ModUser original = new ModUser(uid, new ModConfiguration(general, physics, breasts,
+                new UVLayouts(new UVLayouts.Layer(layout, layout), new UVLayouts.Layer(layout, layout))));
+
+        byte[] encoded = protocol2.writeClientbound(original);
+        ModUser decoded = protocol2.readClientbound(encoded);
+        assertEquals(uid, decoded.userId());
+        assertEquals(GenderIdentities.FEMALE, decoded.configuration().generalOptions().genderIdentity());
+        assertEquals(0.7F, decoded.configuration().breastOptions().bustSize());
+        assertEquals(-0.3F, decoded.configuration().breastOptions().zOffset());
+        assertEquals(0.4F, decoded.configuration().physicsOptions().bounceMultiplier());
+        assertEquals(0.9F, decoded.configuration().physicsOptions().floppiness());
+        assertTrue(decoded.configuration().physicsOptions().showInArmor());
+        assertEquals(4, decoded.configuration().uvLayouts().skin().left().getQuads()
+                .get(UVDirection.NORTH).y2());
+    }
+
+    @Test
+    void protocol2DisabledPhysicsOmitsOptionalFieldsAndUsesDefaults() throws IOException {
+        UUID uid = UUID.randomUUID();
+        ModUser original = new ModUser(uid, new ModConfiguration(
+                new GeneralOptions(GenderIdentities.OTHER, false, 0.9F),
+                new PhysicsOptions(false, false, 0.2F, 0.5F),
+                new BreastOptions(0.5F, 0F, 0F, -0.2F, false, 0F), emptyLayouts()));
+        ModUser decoded = protocol2.readClientbound(protocol2.writeClientbound(original));
+        assertFalse(decoded.configuration().physicsOptions().breastPhysics());
+        assertFalse(decoded.configuration().physicsOptions().showInArmor());
+        assertEquals(0.333F, decoded.configuration().physicsOptions().bounceMultiplier());
+        assertEquals(0.75F, decoded.configuration().physicsOptions().floppiness());
     }
 
     @Test

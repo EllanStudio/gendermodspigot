@@ -2,5 +2,5 @@ name: Female-Gender-Mod-Paper
 version: '${version}'
 main: dbrighthd.wildfiregendermodplugin.GenderModPlugin
 api-version: '26.2'
-description: Paper backend companion for Female Gender Mod 5.0.0-Beta.4 — MC 26.2 / sync protocol 1
+description: Paper 26.3; supports Female Gender Mod Beta.4 protocol 1 and 5.0.0 protocol 2
 authors: [EllanStudio]

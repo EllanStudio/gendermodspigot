@@ -29,10 +29,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Velocity bridge for Female Gender Mod 5.0.0-Beta.4 profile data.
- *
- * <p>This standalone proxy plugin only accepts HMAC-authenticated messages
- * originating from a backend connection. It never forwards client payloads.</p>
+ * Authenticated Velocity bridge for both Female Gender Mod profile protocols.
+ * Profiles remain protocol-specific in the proxy cache, preserving the exact
+ * legacy Beta.4 bridge while allowing independent modern 26.3 backends.
  */
 @Plugin(
         id = "female-gender-velocity",
@@ -41,8 +40,10 @@ import java.util.concurrent.ConcurrentHashMap;
         authors = {"EllanStudio"}
 )
 public final class VelocityPlugin {
-    private static final MinecraftChannelIdentifier CHANNEL =
+    private static final MinecraftChannelIdentifier LEGACY_CHANNEL =
             MinecraftChannelIdentifier.from("wildfire_gender:proxy");
+    private static final MinecraftChannelIdentifier MODERN_CHANNEL =
+            MinecraftChannelIdentifier.from("female_gender_mod:proxy");
     private static final byte PROFILE_SYNC = 1;
     private static final byte PROFILE_REQUEST = 2;
     private static final int UUID_BYTES = 16;
@@ -53,7 +54,8 @@ public final class VelocityPlugin {
     private final ProxyServer proxy;
     private final Logger logger;
     private final Path dataDirectory;
-    private final Map<UUID, byte[]> profiles = new ConcurrentHashMap<>();
+    private final Map<UUID, byte[]> legacyProfiles = new ConcurrentHashMap<>();
+    private final Map<UUID, byte[]> modernProfiles = new ConcurrentHashMap<>();
     private volatile byte[] sharedSecret = new byte[0];
 
     @Inject
@@ -69,25 +71,24 @@ public final class VelocityPlugin {
             logger.warn("Female Gender Mod Velocity Bridge is disabled: set shared-secret in {}/{}", dataDirectory, CONFIG_FILE);
             return;
         }
-        proxy.getChannelRegistrar().register(CHANNEL);
-        logger.info("Female Gender Mod Velocity Bridge v1.6.2 enabled");
+        proxy.getChannelRegistrar().register(LEGACY_CHANNEL, MODERN_CHANNEL);
+        logger.info("Female Gender Mod Velocity Bridge v1.6.2 enabled (protocols 1 and 2)");
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
-        profiles.clear();
+        legacyProfiles.clear();
+        modernProfiles.clear();
         if (isBridgeEnabled()) {
-            proxy.getChannelRegistrar().unregister(CHANNEL);
+            proxy.getChannelRegistrar().unregister(LEGACY_CHANNEL, MODERN_CHANNEL);
         }
     }
 
-    /**
-     * Handles only authenticated messages from a backend connection. Marking
-     * the channel handled before source validation prevents client forwarding.
-     */
+    /** Handles only authenticated messages from a backend connection. */
     @Subscribe
     public void onPluginMessage(PluginMessageEvent event) {
-        if (!CHANNEL.equals(event.getIdentifier())) {
+        MinecraftChannelIdentifier channel = channel(event);
+        if (channel == null) {
             return;
         }
         event.setResult(PluginMessageEvent.ForwardResult.handled());
@@ -104,14 +105,26 @@ public final class VelocityPlugin {
             return;
         }
 
+        Map<UUID, byte[]> profiles = channel.equals(MODERN_CHANNEL) ? modernProfiles : legacyProfiles;
         switch (message[0]) {
-            case PROFILE_SYNC -> handleProfileSync(source, message);
-            case PROFILE_REQUEST -> handleProfileRequest(source, message);
+            case PROFILE_SYNC -> handleProfileSync(source, channel, profiles, message);
+            case PROFILE_REQUEST -> handleProfileRequest(source, channel, profiles, message);
             default -> { }
         }
     }
 
-    private void handleProfileSync(ServerConnection source, byte[] message) {
+    private MinecraftChannelIdentifier channel(PluginMessageEvent event) {
+        if (LEGACY_CHANNEL.equals(event.getIdentifier())) {
+            return LEGACY_CHANNEL;
+        }
+        if (MODERN_CHANNEL.equals(event.getIdentifier())) {
+            return MODERN_CHANNEL;
+        }
+        return null;
+    }
+
+    private void handleProfileSync(ServerConnection source, MinecraftChannelIdentifier channel,
+                                   Map<UUID, byte[]> profiles, byte[] message) {
         int profileLength = message.length - 1;
         if (profileLength < UUID_BYTES || profileLength > MAX_PROFILE_BYTES) {
             return;
@@ -128,19 +141,20 @@ public final class VelocityPlugin {
         byte[] outgoing = signEnvelope(PROFILE_SYNC, profile);
         for (RegisteredServer server : proxy.getAllServers()) {
             if (!server.getServerInfo().getName().equals(sourceName)) {
-                server.sendPluginMessage(CHANNEL, outgoing);
+                server.sendPluginMessage(channel, outgoing);
             }
         }
     }
 
-    private void handleProfileRequest(ServerConnection source, byte[] message) {
+    private void handleProfileRequest(ServerConnection source, MinecraftChannelIdentifier channel,
+                                      Map<UUID, byte[]> profiles, byte[] message) {
         if (message.length != 1 + UUID_BYTES) {
             return;
         }
 
         byte[] profile = profiles.get(readUuid(message, 1));
         if (profile != null) {
-            source.sendPluginMessage(CHANNEL, signEnvelope(PROFILE_SYNC, profile));
+            source.sendPluginMessage(channel, signEnvelope(PROFILE_SYNC, profile));
         }
     }
 

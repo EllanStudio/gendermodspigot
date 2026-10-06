@@ -22,14 +22,29 @@ public final class GenderModPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new ConnectionListener(this), this);
 
         ModPayloadListener listener = new ModPayloadListener(this);
+        registerIncoming(ModConstants.LEGACY_SERVERBOUND_HELLO, listener);
+        registerOutgoing(ModConstants.LEGACY_CLIENTBOUND_HELLO);
+        registerIncoming(ModConstants.LEGACY_SERVERBOUND_SYNC, listener);
+        registerOutgoing(ModConstants.LEGACY_CLIENTBOUND_SYNC);
 
-        getServer().getMessenger().registerIncomingPluginChannel(this, ModConstants.SERVERBOUND_HELLO, listener);
-        getServer().getMessenger().registerOutgoingPluginChannel(this, ModConstants.CLIENTBOUND_HELLO);
-        getServer().getMessenger().registerIncomingPluginChannel(this, ModConstants.SERVERBOUND_SYNC, listener);
-        getServer().getMessenger().registerOutgoingPluginChannel(this, ModConstants.CLIENTBOUND_SYNC);
+        // Paper 26.3's PlayerConnection overload delivers this during CONFIG.
+        registerIncoming(ModConstants.MODERN_SERVERBOUND_HELLO, listener);
+        registerOutgoing(ModConstants.MODERN_CLIENTBOUND_HELLO);
+        registerIncoming(ModConstants.MODERN_SERVERBOUND_SYNC, listener);
+        registerOutgoing(ModConstants.MODERN_CLIENTBOUND_SYNC);
 
-        getServer().getMessenger().registerIncomingPluginChannel(this, ModConstants.PROXY_CHANNEL, listener);
-        getServer().getMessenger().registerOutgoingPluginChannel(this, ModConstants.PROXY_CHANNEL);
+        registerIncoming(ModConstants.LEGACY_PROXY_CHANNEL, listener);
+        registerOutgoing(ModConstants.LEGACY_PROXY_CHANNEL);
+        registerIncoming(ModConstants.MODERN_PROXY_CHANNEL, listener);
+        registerOutgoing(ModConstants.MODERN_PROXY_CHANNEL);
+    }
+
+    private void registerIncoming(String channel, ModPayloadListener listener) {
+        getServer().getMessenger().registerIncomingPluginChannel(this, channel, listener);
+    }
+
+    private void registerOutgoing(String channel) {
+        getServer().getMessenger().registerOutgoingPluginChannel(this, channel);
     }
 
     @Override
