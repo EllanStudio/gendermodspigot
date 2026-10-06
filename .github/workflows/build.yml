@@ -39,8 +39,8 @@ jobs:
           export JAVA_HOME="$JDK21"
           export PATH="$JAVA_HOME/bin:$PATH"
           java -version
-          ./gradlew --version
-          ./gradlew test build --no-daemon \
+          bash gradlew --version
+          bash gradlew test build --no-daemon \
             -PpaperVersion=${{ matrix.paper-version }} \
             "-Dorg.gradle.java.installations.paths=$JDK25,$JDK21"
 
