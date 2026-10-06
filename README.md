@@ -1,6 +1,6 @@
 # Female Gender Mod — Paper / Velocity Bridge
 
-A **Paper-only** server companion for [Female Gender Mod](https://github.com/FemaleGenderMod/FemaleGenderMod), targeting **Minecraft 26.2** and the exact sync protocol **1** used by **Female Gender Mod 5.0.0-Beta.4**.
+A **Paper-only** server companion compiled for **Paper/Minecraft 26.3**, while its network bridge still implements only the **Female Gender Mod 5.0.0-Beta.4 / MC 26.2 sync protocol 1**.
 
 > This project deliberately does **not** support Spigot or BungeeCord. It uses Paper's entity-tracking API for efficient delivery and a separate Velocity bridge for cross-server profile handoff.
 
@@ -19,11 +19,13 @@ Source JARs are for developers only.
 
 | Component | Required version |
 |---|---|
-| Backend | Paper 26.2+ |
+| Backend compile target | Paper 26.3+ |
 | Paper Java | 25+ |
 | Velocity bridge bytecode | Java 17 compatible (class major 61) |
 | Client mod | Female Gender Mod 5.0.0-Beta.4 for MC 26.2 (sync protocol 1) |
 | Proxy (optional) | Velocity 4.1.0+ |
+
+> **Minecraft 26.3 client warning:** Female Gender Mod 5.0.0-Beta.5 and 5.0.0 for 26.3 use `female_gender_mod` and sync protocol 2 with a configuration-phase hello. This Paper plugin still uses the Beta.4 `wildfire_gender` play-phase protocol 1, so it must not be advertised as compatible with those 26.3 client releases. Supporting them requires a configuration-phase packet integration beyond Bukkit/Paper `PluginMessageListener`; no 26.3 end-to-end support is claimed.
 
 ## Installation / 安装
 
@@ -47,6 +49,7 @@ The bridge ignores unsigned or incorrectly signed traffic, so a modded client ca
 ## Synchronisation behaviour / 同步行为
 
 - The exact Beta.4 wire format is used: both directions contain **UUID plus the complete fixed profile**; there is no compact-MALE flag.
+- Protocol 2 (`female_gender_mod`, configuration-phase hello, compact `PlayerConfig`) is intentionally not implemented yet.
 - When a player changes their configuration, the backend sends that profile **once per player currently tracking that entity**.
 - The originating client is explicitly excluded: it already knows its own configuration, and the official mod ignores self-profile packets.
 - When entity tracking begins, the tracker receives the tracked player's current profile once.

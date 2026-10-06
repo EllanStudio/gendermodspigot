@@ -29,7 +29,7 @@ sourceSets {
 
 dependencies {
     // Paper backend plugin: no local Spigot API dependency.
-    compileOnly 'io.papermc.paper:paper-api:26.2.build.+'
+    compileOnly 'io.papermc.paper:paper-api:26.3.build.157-beta'
     compileOnly 'org.jetbrains:annotations:24.0.1'
 
     // Dedicated Velocity bridge source set.
