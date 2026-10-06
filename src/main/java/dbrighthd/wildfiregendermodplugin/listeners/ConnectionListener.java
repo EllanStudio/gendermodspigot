@@ -1,6 +1,7 @@
 package dbrighthd.wildfiregendermodplugin.listeners;
 
 import dbrighthd.wildfiregendermodplugin.GenderModPlugin;
+import io.papermc.paper.event.connection.configuration.PlayerConnectionInitialConfigureEvent;
 import io.papermc.paper.event.player.PlayerTrackEntityEvent;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -20,6 +21,11 @@ public final class ConnectionListener implements Listener {
 
     public ConnectionListener(GenderModPlugin plugin) {
         this.plugin = plugin;
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    private void onInitialConfigure(PlayerConnectionInitialConfigureEvent event) {
+        plugin.getNetworkManager().onInitialConfiguration(event.getConnection());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)

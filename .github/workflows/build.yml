@@ -1,0 +1,53 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        paper-version: ['26.2.build.111-stable', '26.3.build.157-beta']
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      # Gradle itself runs on Java 21; Paper classes use the Java 25 toolchain.
+      - name: Install Java 21 launcher
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Java 25 toolchain
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Build and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          JDK21="${JAVA_HOME_21_X64:-${JAVA_HOME}}"
+          JDK25="${JAVA_HOME_25_X64:-${JAVA_HOME}}"
+          export JAVA_HOME="$JDK21"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
+          ./gradlew --version
+          ./gradlew test build --no-daemon \
+            -PpaperVersion=${{ matrix.paper-version }} \
+            "-Dorg.gradle.java.installations.paths=$JDK25,$JDK21"
+
+      - name: Verify emitted bytecode
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f build/libs/Female-Gender-Mod-Paper-1.6.2.jar
+          test -f build/libs/Female-Gender-Mod-Velocity-1.6.2.jar
+          test "$(xxd -p -l 8 build/classes/java/velocity/dbrighthd/wildfiregendermodplugin/VelocityPlugin.class | cut -c13-16)" = "003d"

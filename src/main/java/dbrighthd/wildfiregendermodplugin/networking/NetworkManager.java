@@ -4,8 +4,10 @@ import dbrighthd.wildfiregendermodplugin.GenderModPlugin;
 import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftInputStream;
 import dbrighthd.wildfiregendermodplugin.networking.minecraft.CraftOutputStream;
 import dbrighthd.wildfiregendermodplugin.networking.wildfire.Beta4SyncPacketCodec;
+import dbrighthd.wildfiregendermodplugin.networking.wildfire.Protocol2SyncPacketCodec;
 import dbrighthd.wildfiregendermodplugin.wildfire.ModConstants;
 import dbrighthd.wildfiregendermodplugin.wildfire.ModUser;
+import io.papermc.paper.connection.PlayerConfigurationConnection;
 import org.bukkit.entity.Player;
 
 import javax.crypto.Mac;
@@ -22,21 +24,24 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * Paper-side synchronisation for Female Gender Mod 5.0.0-Beta.4 / MC 26.2.
+ * Paper-side synchronization for both official Female Gender Mod wire formats.
  *
- * <p>Each config change produces exactly one standard Beta.4 clientbound profile
- * packet for each player currently tracking that entity. The source client is
- * never sent its own profile: the official mod explicitly ignores it because
- * it already owns the authoritative local configuration.</p>
+ * <p>Protocol 1 is the MC 26.2 Beta.4 play-phase format. Protocol 2 is the
+ * MC 26.3 5.0.0-Beta.5+ configuration-hello and compact AvatarConfig format.
+ * Each recipient is encoded using the protocol it negotiated; this also keeps
+ * mixed-version players and the authenticated Velocity bridge isolated.</p>
  */
 public final class NetworkManager {
     private final GenderModPlugin plugin;
-    private final Beta4SyncPacketCodec codec = new Beta4SyncPacketCodec();
+    private final Beta4SyncPacketCodec legacyCodec = new Beta4SyncPacketCodec();
+    private final Protocol2SyncPacketCodec modernCodec = new Protocol2SyncPacketCodec();
     private final ConcurrentMap<UUID, Integer> negotiatedVersions = new ConcurrentHashMap<>();
     private final Set<UUID> waitingForJoinSync = ConcurrentHashMap.newKeySet();
     /** Players whose local client has supplied a newer authoritative profile this session. */
     private final Set<UUID> locallyOwnedProfiles = ConcurrentHashMap.newKeySet();
-    private final ConcurrentMap<UUID, byte[]> encodedProfiles = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, ModUser> profiles = new ConcurrentHashMap<>();
+    /** Tagged raw payloads are used only for duplicate suppression. */
+    private final ConcurrentMap<UUID, byte[]> profileFingerprints = new ConcurrentHashMap<>();
     private volatile byte[] velocitySharedSecret = new byte[0];
 
     public NetworkManager(GenderModPlugin plugin) {
@@ -49,6 +54,49 @@ public final class NetworkManager {
         velocitySharedSecret = secret.isEmpty() ? new byte[0] : secret.getBytes(StandardCharsets.UTF_8);
         if (velocitySharedSecret.length == 0) {
             plugin.getCustomLogger().info("Velocity bridge disabled: velocity.shared-secret is blank");
+        }
+    }
+
+    /**
+     * Starts the protocol-2 handshake in Paper's configuration phase. Paper
+     * exposes this phase through PlayerConfigurationConnection and its plugin
+     * message recipient API; no NMS packet injection is needed.
+     */
+    public void onInitialConfiguration(PlayerConfigurationConnection connection) {
+        UUID playerId = connection.getProfile().getId();
+        if (playerId == null) {
+            return;
+        }
+        try (ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+             CraftOutputStream output = new CraftOutputStream(bytes)) {
+            // ClientboundSyncHelloPacket encodes an IntArrayList containing [2]:
+            // collection length followed by the supported protocol VarInt.
+            output.writeVarInt(1);
+            output.writeVarInt(ModConstants.MODERN_SYNC_PROTOCOL_VERSION);
+            connection.sendPluginMessage(plugin, ModConstants.MODERN_CLIENTBOUND_HELLO, bytes.toByteArray());
+        } catch (IOException exception) {
+            plugin.getCustomLogger().debug(exception, "Could not send protocol-2 hello to %s", playerId);
+        }
+    }
+
+    /** Handles the protocol-2 serverbound hello during configuration. */
+    public void handleModernHello(PlayerConfigurationConnection connection, byte[] message) {
+        UUID playerId = connection.getProfile().getId();
+        if (playerId == null || message.length > 5) {
+            return;
+        }
+        try (CraftInputStream input = CraftInputStream.ofBytes(message)) {
+            int clientVersion = input.readVarInt();
+            if (input.available() != 0 || clientVersion != ModConstants.MODERN_SYNC_PROTOCOL_VERSION) {
+                negotiatedVersions.remove(playerId);
+                plugin.getCustomLogger().debug(
+                        "Unsupported Female Gender Mod protocol-2 hello from %s (version %s)",
+                        playerId, clientVersion);
+                return;
+            }
+            negotiatedVersions.put(playerId, ModConstants.MODERN_SYNC_PROTOCOL_VERSION);
+        } catch (IOException exception) {
+            negotiatedVersions.remove(playerId);
         }
     }
 
@@ -66,25 +114,22 @@ public final class NetworkManager {
             if (input.available() != 0) {
                 return;
             }
-            if (clientVersion == ModConstants.SYNC_PROTOCOL_VERSION) {
-                negotiatedVersions.put(playerId, clientVersion);
+            if (clientVersion == ModConstants.LEGACY_SYNC_PROTOCOL_VERSION) {
+                negotiatedVersions.put(playerId, ModConstants.LEGACY_SYNC_PROTOCOL_VERSION);
             } else {
                 negotiatedVersions.remove(playerId);
                 plugin.getCustomLogger().warning(
-                        "Unsupported Female Gender Mod sync protocol %s from %s; expected Beta.4 protocol %s",
-                        clientVersion, player.getName(), ModConstants.SYNC_PROTOCOL_VERSION);
+                        "Unsupported Female Gender Mod legacy protocol %s from %s; expected Beta.4 protocol %s",
+                        clientVersion, player.getName(), ModConstants.LEGACY_SYNC_PROTOCOL_VERSION);
             }
 
-            output.writeVarInt(ModConstants.SYNC_PROTOCOL_VERSION);
-            player.sendPluginMessage(plugin, ModConstants.CLIENTBOUND_HELLO, bytes.toByteArray());
+            output.writeVarInt(ModConstants.LEGACY_SYNC_PROTOCOL_VERSION);
+            player.sendPluginMessage(plugin, ModConstants.LEGACY_CLIENTBOUND_HELLO, bytes.toByteArray());
         } catch (IOException ignored) {
             return;
         }
 
-        // If a join event happened first, finish its one-shot initial sync now.
-        if (isSupportedClient(playerId) && waitingForJoinSync.remove(playerId)) {
-            scheduleInitialSync(player);
-        }
+        finishJoinSyncIfReady(player);
     }
 
     /** Called once from PlayerJoinEvent; no recurring task is created. */
@@ -96,98 +141,96 @@ public final class NetworkManager {
         }
     }
 
-    /**
-     * Sends the tracked entity's one normal Beta.4 profile packet to the tracking
-     * player. This mirrors Fabric's EntityTrackingEvents.START_TRACKING path.
-     */
+    /** Sends the tracked entity's one profile packet to the tracking player. */
     public void onStartTracking(Player recipient, Player tracked) {
         sendProfile(recipient, tracked.getUniqueId());
     }
 
-    /** Decodes, deduplicates, stores and relays a client-originated profile update. */
+    /** Backwards-compatible entry point: a play-phase plugin message is protocol 1. */
     public void onClientSync(Player sender, byte[] data) {
+        onClientSync(sender, data, ModConstants.LEGACY_SYNC_PROTOCOL_VERSION);
+    }
+
+    /** Decodes, deduplicates, stores and relays a client-originated profile update. */
+    public void onClientSync(Player sender, byte[] data, int protocol) {
         if (data.length > ModConstants.MAX_SYNC_PAYLOAD_BYTES) {
             return;
         }
 
-        ModUser user = deserializeServerbound(data, sender.getUniqueId());
-        if (user == null || !sender.getUniqueId().equals(user.userId())) {
+        UUID senderId = sender.getUniqueId();
+        ModUser user = deserializeServerbound(data, senderId, protocol);
+        if (user == null || !senderId.equals(user.userId())) {
             return;
         }
 
-        // A valid Beta.4 profile proves support even if hello raced behind it.
-        negotiatedVersions.put(sender.getUniqueId(), ModConstants.SYNC_PROTOCOL_VERSION);
-        if (waitingForJoinSync.remove(sender.getUniqueId())) {
+        // A valid payload proves support even if the hello raced behind it.
+        negotiatedVersions.put(senderId, protocol);
+        locallyOwnedProfiles.add(senderId);
+        if (waitingForJoinSync.remove(senderId)) {
             scheduleInitialSync(sender);
         }
-        locallyOwnedProfiles.add(user.userId());
 
-        byte[] clientbound;
-        try {
-            clientbound = codec.writeClientbound(user);
-        } catch (IOException ignored) {
+        if (!storeProfile(user, protocol, data)) {
             return;
         }
-
-        byte[] previous = encodedProfiles.put(user.userId(), clientbound);
-        plugin.getUserManager().getUsers().put(user.userId(), user);
-        if (Arrays.equals(previous, clientbound)) {
-            return; // The mod sent the same state again; no network work needed.
-        }
-
-        forwardToVelocity(sender, clientbound);
-        broadcastToTrackers(sender, clientbound);
+        forwardToVelocity(sender, user, protocol);
+        broadcastToTrackers(sender);
     }
 
-    /** Handles a message that originated from the dedicated Velocity bridge. */
-    public void handleProxyMessage(byte[] message) {
+    /** Handles a message from the protocol-matched authenticated Velocity channel. */
+    public void handleProxyMessage(byte[] message, int protocol) {
         byte[] verified = verifyVelocityMessage(message);
         if (verified == null || verified.length < 2 || verified[0] != ModConstants.PROXY_PROFILE_SYNC) {
             return;
         }
 
-        int payloadLength = verified.length - 1;
-        if (payloadLength > ModConstants.MAX_SYNC_PAYLOAD_BYTES) {
+        byte[] profile = Arrays.copyOfRange(verified, 1, verified.length);
+        if (profile.length > ModConstants.MAX_SYNC_PAYLOAD_BYTES) {
             return;
         }
 
-        byte[] profile = Arrays.copyOfRange(verified, 1, verified.length);
         ModUser user;
         try {
-            user = codec.readClientbound(profile);
+            user = protocol == ModConstants.MODERN_SYNC_PROTOCOL_VERSION
+                    ? modernCodec.readClientbound(profile)
+                    : legacyCodec.readClientbound(profile);
         } catch (IOException ignored) {
             return;
         }
 
-        // A delayed Velocity response must not overwrite a profile the local client
-        // has already sent after joining this backend.
+        // A delayed Velocity response must not overwrite a profile the local
+        // client has already sent after joining this backend.
         if (locallyOwnedProfiles.contains(user.userId())) {
             return;
         }
-
-        byte[] previous = encodedProfiles.put(user.userId(), profile);
-        plugin.getUserManager().getUsers().put(user.userId(), user);
-        if (Arrays.equals(previous, profile)) {
+        if (!storeProfile(user, protocol, profile)) {
             return;
         }
 
-        // A remote profile matters only when its owner is actually on this backend.
         Player source = findOnline(user.userId());
         if (source != null) {
-            broadcastToTrackers(source, profile);
+            broadcastToTrackers(source);
         }
     }
 
-    /** Requests the joining player's cached profile from Velocity. */
+    /** Legacy bridge entry point retained for callers compiled against v1. */
+    public void handleProxyMessage(byte[] message) {
+        handleProxyMessage(message, ModConstants.LEGACY_SYNC_PROTOCOL_VERSION);
+    }
+
+    /** Requests the joining player's cached profile from the matching bridge channel. */
     public void requestProfileFromVelocity(Player player) {
-        if (!isSupportedClient(player.getUniqueId()) || !isVelocityBridgeEnabled()) {
+        int protocol = protocolFor(player.getUniqueId());
+        if (protocol < 0 || !isVelocityBridgeEnabled()) {
             return;
         }
 
         byte[] request = new byte[17];
         request[0] = ModConstants.PROXY_PROFILE_REQUEST;
         writeUuid(request, 1, player.getUniqueId());
-        player.sendPluginMessage(plugin, ModConstants.PROXY_CHANNEL, signVelocityMessage(request));
+        String channel = protocol == ModConstants.MODERN_SYNC_PROTOCOL_VERSION
+                ? ModConstants.MODERN_PROXY_CHANNEL : ModConstants.LEGACY_PROXY_CHANNEL;
+        player.sendPluginMessage(plugin, channel, signVelocityMessage(request));
     }
 
     /** Cleans all Paper-side state for a disconnected player. */
@@ -195,17 +238,40 @@ public final class NetworkManager {
         negotiatedVersions.remove(userId);
         waitingForJoinSync.remove(userId);
         locallyOwnedProfiles.remove(userId);
-        encodedProfiles.remove(userId);
+        profiles.remove(userId);
+        profileFingerprints.remove(userId);
         plugin.getUserManager().getUsers().remove(userId);
     }
 
     public boolean isSupportedClient(UUID userId) {
-        return ModConstants.SYNC_PROTOCOL_VERSION == negotiatedVersions.getOrDefault(userId, -1);
+        return protocolFor(userId) >= 0;
+    }
+
+    public int protocolFor(UUID userId) {
+        int version = negotiatedVersions.getOrDefault(userId, -1);
+        return version == ModConstants.LEGACY_SYNC_PROTOCOL_VERSION
+                || version == ModConstants.MODERN_SYNC_PROTOCOL_VERSION ? version : -1;
+    }
+
+    private void finishJoinSyncIfReady(Player player) {
+        if (isSupportedClient(player.getUniqueId()) && waitingForJoinSync.remove(player.getUniqueId())) {
+            scheduleInitialSync(player);
+        }
+    }
+
+    private boolean storeProfile(ModUser user, int protocol, byte[] payload) {
+        byte[] tagged = new byte[payload.length + 1];
+        tagged[0] = (byte) protocol;
+        System.arraycopy(payload, 0, tagged, 1, payload.length);
+        byte[] previous = profileFingerprints.put(user.userId(), tagged);
+        profiles.put(user.userId(), user);
+        plugin.getUserManager().getUsers().put(user.userId(), user);
+        return !Arrays.equals(previous, tagged);
     }
 
     private void scheduleInitialSync(Player player) {
-        // One one-shot task ensures the client is in play phase and has registered
-        // its clientbound sync receiver. This is not polling or per-tick work.
+        // One one-shot task ensures the client is in play phase and has
+        // registered its clientbound sync receiver. This is not polling.
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             if (!player.isOnline() || !isSupportedClient(player.getUniqueId())) {
                 return;
@@ -215,7 +281,6 @@ public final class NetworkManager {
         });
     }
 
-    /** Sends one standard packet for each currently tracked *other* player. */
     private void sendInitialTrackedProfiles(Player recipient) {
         for (Player source : plugin.getServer().getOnlinePlayers()) {
             if (!source.equals(recipient) && source.getTrackedBy().contains(recipient)) {
@@ -224,46 +289,50 @@ public final class NetworkManager {
         }
     }
 
-    private void broadcastToTrackers(Player source, byte[] clientboundProfile) {
+    private void broadcastToTrackers(Player source) {
         for (Player recipient : source.getTrackedBy()) {
             if (!recipient.equals(source) && isSupportedClient(recipient.getUniqueId())) {
-                recipient.sendPluginMessage(plugin, ModConstants.CLIENTBOUND_SYNC, clientboundProfile);
+                sendProfile(recipient, source.getUniqueId());
             }
         }
     }
 
     private void sendProfile(Player recipient, UUID sourceId) {
-        if (recipient.getUniqueId().equals(sourceId) || !isSupportedClient(recipient.getUniqueId())) {
+        if (recipient.getUniqueId().equals(sourceId)) {
             return;
         }
-
-        byte[] payload = encodedProfiles.get(sourceId);
-        if (payload == null) {
-            ModUser user = plugin.getUserManager().getUsers().get(sourceId);
-            if (user == null) {
-                return;
-            }
-            try {
-                payload = codec.writeClientbound(user);
-                byte[] existing = encodedProfiles.putIfAbsent(sourceId, payload);
-                if (existing != null) {
-                    payload = existing;
-                }
-            } catch (IOException ignored) {
-                return;
-            }
+        ModUser user = profiles.get(sourceId);
+        int protocol = protocolFor(recipient.getUniqueId());
+        if (user == null || protocol < 0) {
+            return;
         }
-        recipient.sendPluginMessage(plugin, ModConstants.CLIENTBOUND_SYNC, payload);
+        try {
+            byte[] payload = protocol == ModConstants.MODERN_SYNC_PROTOCOL_VERSION
+                    ? modernCodec.writeClientbound(user) : legacyCodec.writeClientbound(user);
+            String channel = protocol == ModConstants.MODERN_SYNC_PROTOCOL_VERSION
+                    ? ModConstants.MODERN_CLIENTBOUND_SYNC : ModConstants.LEGACY_CLIENTBOUND_SYNC;
+            recipient.sendPluginMessage(plugin, channel, payload);
+        } catch (IOException ignored) {
+            // Invalid server-side state is never sent to a client.
+        }
     }
 
-    private void forwardToVelocity(Player carrier, byte[] clientboundProfile) {
+    private void forwardToVelocity(Player carrier, ModUser user, int protocol) {
         if (!isVelocityBridgeEnabled()) {
             return;
         }
-        byte[] message = new byte[clientboundProfile.length + 1];
-        message[0] = ModConstants.PROXY_PROFILE_SYNC;
-        System.arraycopy(clientboundProfile, 0, message, 1, clientboundProfile.length);
-        carrier.sendPluginMessage(plugin, ModConstants.PROXY_CHANNEL, signVelocityMessage(message));
+        try {
+            byte[] profile = protocol == ModConstants.MODERN_SYNC_PROTOCOL_VERSION
+                    ? modernCodec.writeClientbound(user) : legacyCodec.writeClientbound(user);
+            byte[] message = new byte[profile.length + 1];
+            message[0] = ModConstants.PROXY_PROFILE_SYNC;
+            System.arraycopy(profile, 0, message, 1, profile.length);
+            String channel = protocol == ModConstants.MODERN_SYNC_PROTOCOL_VERSION
+                    ? ModConstants.MODERN_PROXY_CHANNEL : ModConstants.LEGACY_PROXY_CHANNEL;
+            carrier.sendPluginMessage(plugin, channel, signVelocityMessage(message));
+        } catch (IOException ignored) {
+            // Invalid server-side state is never forwarded.
+        }
     }
 
     private boolean isVelocityBridgeEnabled() {
@@ -300,12 +369,14 @@ public final class NetworkManager {
         }
     }
 
-    private ModUser deserializeServerbound(byte[] data, UUID senderId) {
-        try (CraftInputStream input = CraftInputStream.ofBytes(data)) {
-            return codec.read(input, senderId);
+    private ModUser deserializeServerbound(byte[] data, UUID senderId, int protocol) {
+        try {
+            return protocol == ModConstants.MODERN_SYNC_PROTOCOL_VERSION
+                    ? modernCodec.readServerbound(data, senderId)
+                    : legacyCodec.read(CraftInputStream.ofBytes(data), senderId);
         } catch (IOException exception) {
             plugin.getCustomLogger().debug(exception,
-                    "Rejected malformed Beta.4 sync payload from %s", senderId);
+                    "Rejected malformed Female Gender Mod protocol %s payload from %s", protocol, senderId);
             return null;
         }
     }

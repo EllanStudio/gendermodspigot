@@ -14,6 +14,12 @@ java {
 }
 
 repositories {
+    // repo1 is Maven Central's canonical mirror; it is more reliable than the
+    // repo.maven.apache.org hostname in restricted CI networks.
+    maven {
+        name = 'centralMirror'
+        url = uri('https://repo1.maven.org/maven2/')
+    }
     mavenCentral()
     maven {
         name = 'papermc'
@@ -29,7 +35,8 @@ sourceSets {
 
 dependencies {
     // Paper backend plugin: no local Spigot API dependency.
-    compileOnly 'io.papermc.paper:paper-api:26.3.build.157-beta'
+    compileOnly "io.papermc.paper:paper-api:${providers.gradleProperty('paperVersion').getOrElse('26.3.build.157-beta')}"
+    testImplementation "io.papermc.paper:paper-api:${providers.gradleProperty('paperVersion').getOrElse('26.3.build.157-beta')}"
     compileOnly 'org.jetbrains:annotations:24.0.1'
 
     // Dedicated Velocity bridge source set.
@@ -37,9 +44,10 @@ dependencies {
     velocityCompileOnly 'javax.inject:javax.inject:1'
     velocityAnnotationProcessor 'com.velocitypowered:velocity-api:4.1.0-SNAPSHOT'
 
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:6.1.3'
+    testImplementation platform('org.junit:junit-bom:6.1.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter-api'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {

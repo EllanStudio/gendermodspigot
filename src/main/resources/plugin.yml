@@ -1,6 +1,6 @@
 name: Female-Gender-Mod-Paper
 version: '${version}'
 main: dbrighthd.wildfiregendermodplugin.GenderModPlugin
-api-version: '26.3'
-description: Paper 26.3 compile target; Female Gender Mod Beta.4 MC 26.2 wire protocol 1 only
+api-version: '26.2'
+description: Paper 26.3; supports Female Gender Mod Beta.4 protocol 1 and 5.0.0 protocol 2
 authors: [EllanStudio]
